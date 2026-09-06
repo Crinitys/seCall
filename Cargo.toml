@@ -8,6 +8,14 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
+# 로컬 반복 빌드용. release 와 동일한 최적화 수준이되 thin LTO + 병렬 코드젠으로
+# 빌드 시간을 줄인다 (release 는 codegen-units=1 + fat LTO 라 코드젠이 단일 스레드).
+# 배포 산출물은 반드시 --release 로 빌드할 것.
+[profile.fastrel]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [workspace.package]
 # 포크(Crinitys) 나이틀리. rustc/Node 관례대로 "다음 릴리즈" 버전에 프리릴리즈를
 # 붙여, upstream 정식 0.7.0 보다 뒤(0.7.0 < 0.8.0-crinity.nightly.N < 0.8.0)로
