@@ -588,7 +588,7 @@ async fn main() -> anyhow::Result<()> {
             port,
             allow_config_edit,
         } => {
-            commands::serve::run(port, allow_config_edit).await?;
+            commands::serve::run(port, allow_config_edit, false).await?;
         }
         Commands::Model { action } => match action {
             ModelAction::Download { force } => {

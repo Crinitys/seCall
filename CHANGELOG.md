@@ -2,6 +2,29 @@
 
 > NOTE: 전체 버전 · 개발 Phase 이력의 단일 SSOT. (README 의 "버전 히스토리" 표는 2026-07-02 이 파일로 통합됨.)
 
+## v0.8.0-crinity.nightly.1 (2026-09-07)
+
+> 포크(Crinitys) 나이틀리 빌드. upstream 정식 릴리스가 아니며, 버전은 rustc/Node 관례대로 다음 릴리스(0.8.0)에 프리릴리즈 접미사를 붙인 형태다.
+
+MCP 서버만 켜면 Web UI 까지 함께 뜨도록 통합 + claude-mem 옵저버 세션이 실사용자 대화와 섞여 ingest 되던 문제 해결.
+
+### ✨ Features
+
+- **`secall mcp` 기동 시 Web UI 자동 실행**: 별도로 `secall serve` 를 띄울 필요 없이, `web-ui` feature 로 컴파일된 바이너리에서만 REST/Web UI 를 백그라운드로 함께 기동한다(`config.web.auto_start` / `config.web.port`, 기본 `true` / `8080`). Web UI 기동에 실패해도 MCP 서버 자체는 정상 동작한다.
+- **Web UI 중복 기동 방지 (single-instance)**: MCP 서버는 Claude Code 세션마다 프로세스가 뜨므로, 세션 수만큼 Web UI 가 열리는 문제가 있었다. 포트 점유자에게 `GET /api/info` 를 던져 secall 인지 판별해서, secall 이면 기동을 생략하고 무관한 프로그램이면 포트를 10 씩 올려 최대 30 회까지 빈 포트를 찾는다. `secall serve` 는 사용자가 명시적으로 띄우는 것이므로 이 생략 규칙을 적용하지 않는다.
+- **`GET /api/info` 신규**: `{"name":"secall","version":"..."}` 를 반환하는 서버 식별 엔드포인트. DB 접근이 없어 probe 용도로 가볍다.
+- **ingest 제외 경로 패턴** (`config.ingest.exclude_patterns`): 세션 탐색 시 이 문자열이 포함된 디렉터리는 서브트리째 제외한다. `secall init` 대화형 Step 7 에서 프롬프트로 설정할 수 있다.
+
+### 🐛 Fixes
+
+- **claude-mem 옵저버 세션 ingest 차단**: `~/.claude/projects` 아래 claude-mem 플러그인이 만든 옵저버 세션 폴더가 실사용자 대화와 함께 자동 ingest 되던 문제. 특정 경로 하드코딩 대신 위 `exclude_patterns` 로 일반화했다(`ingest --auto` / `sync` 양쪽 적용).
+
+### 🔧 Chore
+
+- **pnpm 12 대응**: `package.json` 의 `pnpm.overrides` 가 더 이상 읽히지 않아 `@ungap/structured-clone` CVE(CWE-502) 픽스 override 가 유실될 수 있었다. `pnpm-workspace.yaml` 의 `overrides` / `allowBuilds` 로 이전해 lockfile 의 1.3.1 핀을 유지한다.
+
+---
+
 ## v0.7.0 (2026-07-06)
 
 Web UI 대개편(가상화·리치 렌더링·live 그래프·Sessions Linear 톤/반응형 + 달력·정렬·필터) + Knowledge Graph 인사이트 + **ingest 파싱 서브시스템 전면 리뷰**(적대적 코드리뷰 23건 확정 → 21건 반영: 워크플로 정크 세션 차단·토큰 이중계산·병렬 tool 출력 유실·YAML frontmatter drop·비ASCII panic 등) + 벡터/그래프 성능 최적화.

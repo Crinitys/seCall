@@ -34,6 +34,7 @@ secall serve --allow-config-edit
 | --- | --- |
 | `POST /api/recall` | 세션 검색 (BM25 / 벡터 / hybrid) |
 | `POST /api/get` | 특정 세션 조회 |
+| `GET /api/info` | 서버 식별 (`{"name":"secall","version":"..."}`) — DB 접근 없음 |
 | `GET /api/status` | 인덱스 상태 |
 | `POST /api/daily` | 데일리 노트 |
 | `POST /api/graph` | Knowledge Graph 조회 |

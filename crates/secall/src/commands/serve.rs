@@ -11,7 +11,11 @@ use secall_core::{
     vault::Config,
 };
 
-pub async fn run(port: u16, allow_config_edit: bool) -> Result<()> {
+/// `single_instance` — 해당 포트를 이미 secall 이 서비스 중이면 새로 띄우지 않는다.
+/// CLI `secall serve` 는 false(사용자가 명시적으로 띄우는 것), `secall mcp` 의
+/// Web UI 자동 기동은 true (세션마다 Web UI 가 늘어나는 것 방지).
+/// 두 경우 모두 무관한 프로그램이 포트를 점유했으면 10씩 올려 빈 포트를 찾는다.
+pub async fn run(port: u16, allow_config_edit: bool, single_instance: bool) -> Result<()> {
     let db_path = get_default_db_path();
     let db = Database::open(&db_path)?;
 
@@ -126,6 +130,7 @@ pub async fn run(port: u16, allow_config_edit: bool) -> Result<()> {
         port,
         executor,
         allow_config_edit,
+        single_instance,
     )
     .await
 }

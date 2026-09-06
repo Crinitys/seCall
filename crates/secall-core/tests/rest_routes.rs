@@ -37,6 +37,27 @@ async fn test_router_smoke_get_status() {
     );
 }
 
+/// `GET /api/info` 는 DB 접근 없이 서버 식별자를 반환해야 한다. `secall mcp` 의
+/// Web UI 자동 기동이 "포트 점유자가 secall 인가"를 이 응답으로 판별하므로,
+/// `name == "secall"` 과 200 응답이 깨지면 중복 Web UI 가 뜬다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_info_returns_server_identity() {
+    let env = make_test_env().await;
+
+    let (status, body) = send_request(&env.router, Method::GET, "/api/info", None).await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {body}");
+    assert_eq!(
+        body.get("name").and_then(|v| v.as_str()),
+        Some("secall"),
+        "/api/info must identify the server as 'secall': {body}"
+    );
+    assert!(
+        body.get("version").and_then(|v| v.as_str()).is_some(),
+        "/api/info must contain a version string: {body}"
+    );
+}
+
 // ─── Section 1: read 라우트 회귀 ──────────────────────────────────────────────
 
 // ── 1.1 POST /api/recall ─────────────────────────────────────────────────────

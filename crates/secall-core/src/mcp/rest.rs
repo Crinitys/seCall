@@ -134,6 +134,9 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
     };
 
     let api = Router::new()
+        // 서버 식별용 — DB 접근 없는 정적 응답. 포트 점유자가 secall 인지
+        // 판별하는 probe(`is_secall_server`)가 이 엔드포인트를 쓴다.
+        .route("/api/info", get(api_info))
         .route("/api/recall", post(api_recall))
         .route("/api/get", post(api_get))
         .route("/api/status", get(api_status))
@@ -180,6 +183,12 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
 }
 
 /// REST + MCP 통합 서버 시작 (loopback 전용)
+///
+/// 포트가 사용 중이면 10씩 올려가며 빈 포트를 찾는다. `single_instance` 가 true 면
+/// 그 전에 해당 포트를 이미 secall 이 쓰고 있는지 확인해서, 맞다면 서버를 띄우지
+/// 않고 조용히 종료한다 (`secall mcp` 는 세션마다 프로세스가 뜨므로 Web UI 가
+/// 세션 수만큼 늘어나는 것을 막는다). 무관한 프로그램이 점유한 경우엔 그대로
+/// 다음 포트로 넘어간다.
 pub async fn start_rest_server(
     db_arc: Arc<std::sync::Mutex<Database>>,
     search: SearchEngine,
@@ -187,18 +196,22 @@ pub async fn start_rest_server(
     port: u16,
     executor: Arc<JobExecutor>,
     allow_config_edit: bool,
+    single_instance: bool,
 ) -> anyhow::Result<()> {
+    let Some(listener) = bind_with_retry(port, MAX_PORT_RETRIES, single_instance).await? else {
+        tracing::info!(port, "다른 secall 인스턴스가 이미 Web UI 서비스 중 — 기동 생략");
+        return Ok(());
+    };
+    let addr = listener.local_addr()?;
+
     let search_arc = Arc::new(search);
     let server =
         SeCallMcpServer::new_with_options(db_arc, search_arc, vault_path, allow_config_edit);
     let router = rest_router(server, executor);
 
-    let listener = bind_with_retry(port).await?;
-    let addr = listener.local_addr()?;
-
     tracing::info!(addr = %addr, "REST API server listening");
     tracing::info!(
-        "endpoints: /api/recall, /api/get, /api/status, /api/wiki, /api/graph, /api/daily, \
+        "endpoints: /api/info, /api/recall, /api/get, /api/status, /api/wiki, /api/graph, /api/daily, \
          /api/commands/{{sync,ingest,wiki-update,graph-rebuild}}, /api/jobs, /api/jobs/:id, \
          /api/jobs/:id/stream, /api/jobs/:id/cancel"
     );
@@ -211,13 +224,30 @@ pub async fn start_rest_server(
 /// 다른 프로세스가 이미 점유했을 확률이 높아 자동으로 빈 포트를 찾는다.
 const MAX_PORT_RETRIES: u16 = 30;
 
-async fn bind_with_retry(port: u16) -> anyhow::Result<tokio::net::TcpListener> {
+/// 점유 포트가 secall 인지 판별할 때 쓰는 probe 타임아웃 (loopback 이므로 짧게).
+const SECALL_PROBE_TIMEOUT: Duration = Duration::from_millis(700);
+
+/// `/api/info` 가 돌려주는 서버 식별자. probe 가 이 값으로 secall 여부를 판단한다.
+const SERVER_NAME: &str = "secall";
+
+/// `Ok(None)` = `skip_if_secall` 이 켜진 상태에서 해당 포트를 이미 secall 이
+/// 서비스 중 → 새로 띄우지 말라는 뜻.
+async fn bind_with_retry(
+    port: u16,
+    max_attempts: u16,
+    skip_if_secall: bool,
+) -> anyhow::Result<Option<tokio::net::TcpListener>> {
     let mut current_port = port;
-    for attempt in 0..MAX_PORT_RETRIES {
+    for attempt in 0..max_attempts.max(1) {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], current_port));
         match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => return Ok(listener),
+            Ok(listener) => return Ok(Some(listener)),
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                // 점유자가 secall 자신이면 중복 기동이므로 여기서 종료.
+                // 무관한 프로그램이면 아래로 내려가 다음 포트를 시도한다.
+                if skip_if_secall && is_secall_server(current_port).await {
+                    return Ok(None);
+                }
                 let next_port = current_port.saturating_add(10);
                 tracing::warn!(
                     port = current_port,
@@ -231,8 +261,42 @@ async fn bind_with_retry(port: u16) -> anyhow::Result<tokio::net::TcpListener> {
         }
     }
     Err(anyhow::anyhow!(
-        "REST 서버 바인딩 실패: {port}부터 {current_port}까지 {MAX_PORT_RETRIES}회 시도, 전부 사용 중"
+        "REST 서버 바인딩 실패: {port}부터 {current_port}까지 {max_attempts}회 시도, 전부 사용 중"
     ))
+}
+
+/// loopback 포트의 점유자가 secall REST 서버인지 `/api/info` 응답으로 판별.
+/// HTTP 200 + `name == "secall"` 일 때만 참. 실패/타임아웃/형식 불일치는 모두
+/// "secall 아님"(= 무관한 프로그램)으로 간주한다.
+async fn is_secall_server(port: u16) -> bool {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(SECALL_PROBE_TIMEOUT)
+        .build()
+    else {
+        return false;
+    };
+    let url = format!("http://127.0.0.1:{port}/api/info");
+    let Ok(resp) = client.get(&url).send().await else {
+        return false;
+    };
+    if !resp.status().is_success() {
+        return false;
+    }
+    let Ok(json) = resp.json::<serde_json::Value>().await else {
+        return false;
+    };
+    json.get("name").and_then(|v| v.as_str()) == Some(SERVER_NAME)
+}
+
+/// 서버 식별 응답. DB/상태 접근 없이 이름과 버전만 돌려준다.
+async fn api_info() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "name": SERVER_NAME,
+            "version": env!("CARGO_PKG_VERSION"),
+        })),
+    )
 }
 
 async fn api_recall(

@@ -23,17 +23,16 @@ pub async fn run(http: Option<String>) -> Result<()> {
     let vault_path = config.vault.path.clone();
 
     // web-ui feature로 컴파일된 바이너리에서만 REST/Web UI를 background로 자동 기동.
-    // 포트 충돌 등으로 실패해도 MCP 서버 자체는 계속 동작해야 하므로 에러는 warn만.
+    //
+    // MCP 서버는 Claude Code 세션마다 프로세스가 뜨므로 single_instance 모드로 실행한다.
+    // 포트를 이미 secall 이 쓰고 있으면 기동을 생략하고(중복 Web UI 방지), 무관한
+    // 프로그램이 점유한 경우엔 다음 포트를 찾는다. 실패해도 MCP 서버 자체는 정상 동작.
     #[cfg(feature = "web-ui")]
     if config.web.auto_start {
         let port = config.web.port;
         tokio::spawn(async move {
-            if let Err(e) = crate::commands::serve::run(port, false).await {
-                tracing::warn!(
-                    error = %e,
-                    port,
-                    "Web UI 자동 기동 실패 (포트 충돌 등) — MCP 서버는 정상 동작합니다"
-                );
+            if let Err(e) = crate::commands::serve::run(port, false, true).await {
+                tracing::warn!(error = %e, port, "Web UI 자동 기동 실패 — MCP 서버는 정상 동작합니다");
             }
         });
     }
