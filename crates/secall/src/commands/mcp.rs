@@ -21,6 +21,23 @@ pub async fn run(http: Option<String>) -> Result<()> {
     let search = SearchEngine::new(bm25, vector);
 
     let vault_path = config.vault.path.clone();
+
+    // web-ui feature로 컴파일된 바이너리에서만 REST/Web UI를 background로 자동 기동.
+    // 포트 충돌 등으로 실패해도 MCP 서버 자체는 계속 동작해야 하므로 에러는 warn만.
+    #[cfg(feature = "web-ui")]
+    if config.web.auto_start {
+        let port = config.web.port;
+        tokio::spawn(async move {
+            if let Err(e) = crate::commands::serve::run(port, false).await {
+                tracing::warn!(
+                    error = %e,
+                    port,
+                    "Web UI 자동 기동 실패 (포트 충돌 등) — MCP 서버는 정상 동작합니다"
+                );
+            }
+        });
+    }
+
     match http {
         Some(addr) => start_mcp_http_server(db, search, vault_path, &addr).await,
         None => start_mcp_server(db, search, vault_path).await,

@@ -193,8 +193,8 @@ pub async fn start_rest_server(
         SeCallMcpServer::new_with_options(db_arc, search_arc, vault_path, allow_config_edit);
     let router = rest_router(server, executor);
 
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = bind_with_retry(port).await?;
+    let addr = listener.local_addr()?;
 
     tracing::info!(addr = %addr, "REST API server listening");
     tracing::info!(
@@ -205,6 +205,34 @@ pub async fn start_rest_server(
 
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+/// `port`가 사용 중(`AddrInUse`)이면 10씩 늘려가며 재시도. 8080 등 흔한 포트는
+/// 다른 프로세스가 이미 점유했을 확률이 높아 자동으로 빈 포트를 찾는다.
+const MAX_PORT_RETRIES: u16 = 30;
+
+async fn bind_with_retry(port: u16) -> anyhow::Result<tokio::net::TcpListener> {
+    let mut current_port = port;
+    for attempt in 0..MAX_PORT_RETRIES {
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], current_port));
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                let next_port = current_port.saturating_add(10);
+                tracing::warn!(
+                    port = current_port,
+                    next_port,
+                    attempt = attempt + 1,
+                    "포트 사용 중 — {next_port}으로 재시도"
+                );
+                current_port = next_port;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(anyhow::anyhow!(
+        "REST 서버 바인딩 실패: {port}부터 {current_port}까지 {MAX_PORT_RETRIES}회 시도, 전부 사용 중"
+    ))
 }
 
 async fn api_recall(

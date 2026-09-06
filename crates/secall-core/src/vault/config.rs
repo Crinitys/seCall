@@ -18,6 +18,27 @@ pub struct Config {
     pub wiki: WikiConfig,
     pub graph: GraphConfig,
     pub log: LogConfig,
+    pub web: WebConfig,
+}
+
+/// `secall mcp` 실행 시 REST/Web UI 서버를 함께 띄울지 설정. web-ui feature로
+/// 컴파일된 바이너리에서만 의미가 있다 — 미지원 빌드는 항상 no-op.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct WebConfig {
+    /// `secall mcp` 시작 시 REST/Web UI 서버를 background로 자동 실행
+    pub auto_start: bool,
+    /// 자동 실행 시 사용할 포트 (`secall serve --port`와 동일한 기본값)
+    pub port: u16,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        WebConfig {
+            auto_start: true,
+            port: 8080,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -328,6 +349,7 @@ impl Default for Config {
             wiki: WikiConfig::default(),
             graph: GraphConfig::default(),
             log: LogConfig::default(),
+            web: WebConfig::default(),
         }
     }
 }
