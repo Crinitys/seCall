@@ -199,7 +199,10 @@ pub async fn start_rest_server(
     single_instance: bool,
 ) -> anyhow::Result<()> {
     let Some(listener) = bind_with_retry(port, MAX_PORT_RETRIES, single_instance).await? else {
-        tracing::info!(port, "다른 secall 인스턴스가 이미 Web UI 서비스 중 — 기동 생략");
+        tracing::info!(
+            port,
+            "다른 secall 인스턴스가 이미 Web UI 서비스 중 — 기동 생략"
+        );
         return Ok(());
     };
     let addr = listener.local_addr()?;
