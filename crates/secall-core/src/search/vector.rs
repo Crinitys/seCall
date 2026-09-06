@@ -189,7 +189,7 @@ impl VectorIndexer {
         if valid_count == 0 && !pending_chunks.is_empty() {
             return Err(anyhow::anyhow!(
                 "session {} embedding completely failed: 0/{} chunks embedded",
-                &session.id,
+                session.id,
                 pending_chunks.len()
             ));
         }
