@@ -25,6 +25,9 @@ pub struct OllamaEmbedder {
     base_url: String,
     model: String,
     pub api_key: Option<String>,
+    /// `options.num_ctx`. Ollama 는 이 값 기준으로 KV 캐시를 선할당하므로 모델
+    /// 기본값(qwen3-embedding: 32768)을 쓰면 0.6B 모델이 5.5GB 를 점유한다.
+    num_ctx: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -33,6 +36,13 @@ struct EmbedRequest {
     input: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     truncate: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<EmbedOptions>,
+}
+
+#[derive(Serialize)]
+struct EmbedOptions {
+    num_ctx: usize,
 }
 
 #[derive(Deserialize)]
@@ -52,7 +62,15 @@ impl OllamaEmbedder {
             base_url: base_url.unwrap_or("http://localhost:11434").to_string(),
             model: model.unwrap_or(DEFAULT_OLLAMA_EMBED_MODEL).to_string(),
             api_key: None,
+            num_ctx: None,
         }
+    }
+
+    /// `config.embedding.ollama_num_ctx` 를 반영한다. `None` 이면 Ollama 가
+    /// 모델 기본 컨텍스트를 그대로 쓴다.
+    pub fn with_num_ctx(mut self, num_ctx: Option<usize>) -> Self {
+        self.num_ctx = num_ctx;
+        self
     }
 
     pub fn with_api_key(mut self, key: Option<String>) -> Self {
@@ -79,6 +97,7 @@ impl Embedder for OllamaEmbedder {
             model: self.model.clone(),
             input: texts.iter().map(|s| s.to_string()).collect(),
             truncate: Some(true),
+            options: self.num_ctx.map(|num_ctx| EmbedOptions { num_ctx }),
         };
 
         let mut request = self

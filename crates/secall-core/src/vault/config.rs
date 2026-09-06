@@ -113,6 +113,17 @@ pub struct EmbeddingConfig {
     pub cloud_model: Option<String>,
     /// Ollama Cloud API key — managed via env OLLAMA_CLOUD_API_KEY, not stored in config
     pub cloud_api_key: Option<String>,
+    /// Ollama 임베딩 요청의 컨텍스트 길이(`options.num_ctx`). Ollama 는 이 값 기준으로
+    /// KV 캐시를 선할당하므로, 모델 기본값(qwen3-embedding 은 32768)을 그대로 쓰면
+    /// 0.6B 모델이 5.5GB 를 점유한다. 4096 이면 2.2GB 로 줄어든다.
+    ///
+    /// 세션 임베딩은 청크 상한이 3600자(`MAX_CHUNK_CHARS`)라 4096 토큰 안에 들어가고
+    /// 검색 쿼리는 훨씬 짧으므로 잘릴 일이 없다. 반면 `wiki vectorize` 는 페이지를
+    /// 청킹하지 않고 통째로 임베딩하므로 이 값을 적용하지 않고 모델 기본 컨텍스트를
+    /// 쓴다. 청크 상한을 늘린다면 이 값도 함께 올려야 조용한 truncation 을 피한다.
+    ///
+    /// None 이면 모델 기본값(= 큰 값)을 그대로 사용.
+    pub ollama_num_ctx: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -217,6 +228,14 @@ pub struct GraphConfig {
     pub semantic: bool,
     /// LLM backend: "ollama" (기본) | "anthropic" | "ollama_cloud" | "lmstudio" | "disabled" (규칙 기반만)
     pub semantic_backend: String,
+    /// 로컬 Ollama 시맨틱 추출 요청의 컨텍스트 길이(`options.num_ctx`).
+    /// Ollama 는 이 값 기준으로 KV 캐시를 선할당하므로 모델 기본 컨텍스트를 그대로
+    /// 쓰면 작은 모델도 VRAM 을 크게 잡는다. 입력은 세션 본문 8000바이트로 이미
+    /// 제한돼 있어 4096 이면 충분하다. None 이면 모델 기본값 사용.
+    ///
+    /// ollama_cloud 는 서버 실행이라 무시하고, lmstudio 는 모델 로드 시점에
+    /// 컨텍스트가 정해지므로 요청으로 바꿀 수 없다 (LM Studio 쪽에서 설정 필요).
+    pub num_ctx: Option<usize>,
     /// Ollama base URL (ollama backend)
     pub ollama_url: Option<String>,
     /// Ollama model name (ollama backend, 기본: gemma4:e4b)
@@ -239,6 +258,7 @@ impl Default for GraphConfig {
             // 가 설정돼 있어야 동작). 키 없으면 호출 시 명시 에러로 실패한다.
             // local 강제 시 config 에 `semantic_backend = "ollama"` 명시.
             semantic_backend: "ollama_cloud".to_string(),
+            num_ctx: Some(4096),
             ollama_url: None,
             ollama_model: None,
             anthropic_model: None,
@@ -387,6 +407,7 @@ impl Default for EmbeddingConfig {
             cloud_host: None,
             cloud_model: None,
             cloud_api_key: None,
+            ollama_num_ctx: Some(4096),
         }
     }
 }

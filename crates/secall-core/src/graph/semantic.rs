@@ -167,6 +167,7 @@ fn build_backend(config: &GraphConfig) -> Result<Box<dyn LlmBackend>> {
             Ok(Box::new(OllamaGraphBackend {
                 base_url: base_url.to_string(),
                 model: model.to_string(),
+                num_ctx: config.num_ctx,
             }))
         }
         "anthropic" => {
@@ -312,6 +313,54 @@ pub async fn extract_and_store(
 mod tests {
     use super::*;
     use mockito::{Matcher, Server};
+
+    /// gemma4:e4b (기본 백엔드 모델) 가 `think: false` 로 실제 반환한 응답을 그대로
+    /// 픽스처로 사용한다. 마크다운 펜스로 감싸인 형태이며, `parse_llm_edges` 가 이를
+    /// 벗겨 엣지로 변환할 수 있어야 한다.
+    ///
+    /// thinking 을 끄지 않으면 이 모델은 추론이 num_ctx 를 소진해 content 를 비워서
+    /// 보내므로 엣지가 하나도 추출되지 않는다 — 그래서 `ollama_chat` 은 항상
+    /// `think: false` 를 보낸다.
+    #[test]
+    fn test_parse_llm_edges_accepts_real_gemma_fenced_response() {
+        let response = r#"```json
+{
+  "edges": [
+    {"relation": "discusses_topic", "target_type": "topic", "target_label": "UI 변환"},
+    {"relation": "modifies_file", "target_type": "file", "target_label": "docs/egui-to-slint-conversion-guide.md"},
+    {"relation": "discusses_topic", "target_type": "topic", "target_label": "Slint"}
+  ]
+}
+```"#;
+
+        let edges = parse_llm_edges(response, "ses1").expect("펜스로 감싸인 응답도 파싱돼야 한다");
+
+        assert_eq!(edges.len(), 3, "유효 엣지 3개가 추출돼야 한다");
+        assert!(edges.iter().all(|e| e.source == "session:ses1"));
+        assert!(edges.iter().any(|e| e.relation == "modifies_file"
+            && e.target == "file:docs/egui-to-slint-conversion-guide.md"));
+        assert!(edges
+            .iter()
+            .any(|e| e.relation == "discusses_topic" && e.target == "topic:Slint"));
+    }
+
+    /// 추론이 content 로 새어나오거나(qwen3:4b) 배열 봉투로 오는(qwen3:1.7b) 응답은
+    /// 파싱되지 않는다 — 조용히 잘못된 엣지를 만들지 않고 에러로 드러나야 한다.
+    #[test]
+    fn test_parse_llm_edges_rejects_non_schema_responses() {
+        assert!(
+            parse_llm_edges("We are given an agent session log and need to...", "ses1").is_err(),
+            "산문 응답은 에러여야 한다"
+        );
+        assert!(
+            parse_llm_edges(
+                r#"[{"relation": "modifies_file", "target_type": "file", "target_label": "a.rs"}]"#,
+                "ses1"
+            )
+            .is_err(),
+            "배열 봉투는 스키마 불일치로 에러여야 한다"
+        );
+    }
 
     fn make_fm(id: &str, tools: Option<Vec<&str>>, summary: Option<&str>) -> SessionFrontmatter {
         SessionFrontmatter {

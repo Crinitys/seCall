@@ -97,6 +97,8 @@ struct OllamaMessage {
 pub(crate) struct OllamaGraphBackend {
     pub base_url: String,
     pub model: String,
+    /// `config.graph.num_ctx` — KV 캐시 선할당 크기를 줄여 VRAM 점유를 낮춘다.
+    pub num_ctx: Option<usize>,
 }
 
 #[async_trait]
@@ -106,7 +108,15 @@ impl LlmBackend for OllamaGraphBackend {
     }
 
     async fn generate(&self, system: &str, user: &str) -> Result<String> {
-        ollama_chat(&self.base_url, &self.model, system, user, None).await
+        ollama_chat(
+            &self.base_url,
+            &self.model,
+            system,
+            user,
+            None,
+            self.num_ctx,
+        )
+        .await
     }
 }
 
@@ -125,12 +135,14 @@ impl LlmBackend for OllamaCloudGraphBackend {
     }
 
     async fn generate(&self, system: &str, user: &str) -> Result<String> {
+        // Cloud 는 서버에서 실행되므로 로컬 VRAM 과 무관 — num_ctx 를 보내지 않는다.
         ollama_chat(
             &self.base_url,
             &self.model,
             system,
             user,
             Some(&self.api_key),
+            None,
         )
         .await
     }
@@ -144,11 +156,24 @@ async fn ollama_chat(
     system: &str,
     user: &str,
     api_key: Option<&str>,
+    num_ctx: Option<usize>,
 ) -> Result<String> {
+    // Ollama 는 num_ctx 기준으로 KV 캐시를 선할당하므로, 모델 기본 컨텍스트를 그대로
+    // 쓰면 작은 모델도 VRAM 을 크게 잡는다. 입력은 `BODY_LIMIT`(8000바이트) 로 이미
+    // 제한돼 있어 4096 정도면 충분하다. None 이면 모델 기본값을 쓴다.
+    let mut options = serde_json::json!({"temperature": 0.1});
+    if let (Some(n), Some(map)) = (num_ctx, options.as_object_mut()) {
+        map.insert("num_ctx".to_string(), serde_json::json!(n));
+    }
+
+    // thinking 비활성화 — 이 작업은 고정 스키마 JSON 추출이라 추론 토큰이 필요 없다.
+    // 켜두면 (1) 추론이 num_ctx 를 소진해 gemma4:e4b 가 빈 응답을 내고, (2) 응답 시간이
+    // 3배가 되며, (3) 모델에 따라 추론이 content 로 새어나와 JSON 파싱이 깨진다.
     let request_body = serde_json::json!({
         "model": model,
         "stream": false,
-        "options": {"temperature": 0.1},
+        "think": false,
+        "options": options,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user}
@@ -379,6 +404,11 @@ mod tests {
                 Matcher::Regex(r#""role":"system""#.to_string()),
                 Matcher::Regex(r#""role":"user""#.to_string()),
                 Matcher::Regex(r#""stream":false"#.to_string()),
+                // thinking 을 끄지 않으면 추론이 num_ctx 를 소진해 content 가 비고,
+                // 응답 시간이 3배가 되며, 모델에 따라 추론이 content 로 새어나온다.
+                Matcher::Regex(r#""think":false"#.to_string()),
+                // num_ctx 는 KV 캐시 선할당 크기 — VRAM 점유를 좌우한다.
+                Matcher::Regex(r#""num_ctx":4096"#.to_string()),
             ]))
             .with_status(200)
             .with_body(ollama_response_body())
@@ -388,6 +418,7 @@ mod tests {
         let backend = OllamaGraphBackend {
             base_url: server.url(),
             model: "qwen3:8b".to_string(),
+            num_ctx: Some(4096),
         };
         let text = backend
             .generate("system", "user")

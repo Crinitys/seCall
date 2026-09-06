@@ -135,8 +135,13 @@ pub async fn run_update(
     review_model: Option<&str>,
     no_pull: bool,
 ) -> Result<()> {
+    // sync 가 신규 세션마다 자동 호출하는 경로다. LLM 을 올리기 전에 임베딩 모델을
+    // 내리고, 끝나면 그 LLM 도 내려서 VRAM 에 두 모델이 겹치지 않게 한다.
+    let config = Config::load_or_default();
+    crate::commands::ingest::unload_ollama_embed_model(&config).await;
+
     // P36 rework — run_update_with_sink 가 page count 반환하지만 CLI 경로에서는 무시.
-    run_update_with_sink(
+    let result = run_update_with_sink(
         model,
         backend,
         since,
@@ -149,7 +154,37 @@ pub async fn run_update(
         None,
     )
     .await
-    .map(|_| ())
+    .map(|_| ());
+
+    unload_wiki_model_if_needed(&config, backend, model).await;
+    result
+}
+
+/// wiki 생성 백엔드가 로컬 Ollama 일 때만 해당 모델을 내린다.
+/// claude/codex 는 별도 프로세스, ollama_cloud 는 서버 실행, lmstudio 는 언로드
+/// API 가 없으므로 대상이 아니다.
+///
+/// 모델명은 백엔드를 만들 때와 동일한 `resolve_backend_model` 로 구한다 — 로드한
+/// 모델과 내리는 모델이 어긋나면 언로드가 헛발질이 된다.
+async fn unload_wiki_model_if_needed(
+    config: &Config,
+    backend: Option<&str>,
+    cli_model: Option<&str>,
+) {
+    let backend_name = backend
+        .map(str::to_string)
+        .unwrap_or_else(|| config.wiki.default_backend.clone());
+    if backend_name != "ollama" {
+        return;
+    }
+    let model = resolve_backend_model(config, &backend_name, cli_model);
+    let url = config
+        .wiki
+        .backends
+        .get(&backend_name)
+        .and_then(|b| b.api_url.as_deref())
+        .unwrap_or("http://localhost:11434");
+    crate::commands::ingest::unload_ollama_model(url, &model, "wiki generation done").await;
 }
 
 /// P36 — `run_update` 의 sink-aware 버전. 내부 session/page 루프와 LLM 호출
@@ -863,6 +898,9 @@ pub fn run_status() -> Result<()> {
 pub async fn vectorize(force: bool, model: &str, ollama_url: &str) -> Result<()> {
     let config = Config::load_or_default();
     let db = Database::open(&get_default_db_path())?;
+    // 위키는 세션과 달리 페이지를 청킹하지 않고 통째로 임베딩하므로, 축소된
+    // num_ctx 를 적용하면 긴 페이지가 조용히 잘린다. 수동 배치 작업이라 VRAM 을
+    // 더 쓰더라도 모델 기본 컨텍스트를 그대로 사용한다.
     let embedder = OllamaEmbedder::new(Some(ollama_url), Some(model));
     let indexer = WikiIndexer {
         vault_path: &config.vault.path,

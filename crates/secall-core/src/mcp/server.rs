@@ -13,7 +13,9 @@ use super::tools::{
     WikiSearchParams,
 };
 use crate::search::bm25::{SearchFilters, SearchResult};
-use crate::search::hybrid::{diversify_by_session, parse_temporal_filter, SearchEngine};
+use crate::search::hybrid::{
+    diversify_by_session, parse_temporal_filter, reciprocal_rank_fusion, SearchEngine, RRF_K,
+};
 use crate::store::db::Database;
 use crate::store::{SessionRepo, WikiVectorRepo};
 use crate::vault::Config;
@@ -37,6 +39,19 @@ struct WikiMatch {
     created: Option<String>,
     updated: Option<String>,
     score: f32,
+}
+
+/// 한 모달리티(BM25 또는 vector) 결과를 점수 내림차순으로 정렬하고 `(session_id,
+/// turn_index)` 기준 중복을 제거한다. RRF 는 순위를 입력으로 쓰므로 융합 전에
+/// 모달리티별 순위가 확정돼 있어야 한다.
+fn sort_and_dedup(results: &mut Vec<SearchResult>) {
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut seen = std::collections::HashSet::new();
+    results.retain(|r| seen.insert((r.session_id.clone(), r.turn_index)));
 }
 
 fn run_future_blocking<T, F>(future: F) -> anyhow::Result<T>
@@ -98,64 +113,83 @@ impl SeCallMcpServer {
             }
         }
 
-        let mut all_results: Vec<SearchResult> = Vec::new();
+        // CLI `SearchEngine::search` 와 동일하게 BM25 + 벡터를 모두 실행한 뒤 RRF 로
+        // 융합한다. 호출자가 keyword 만 보내도 하이브리드가 되도록, temporal 을 뺀
+        // 모든 쿼리를 두 모달리티에 그대로 태운다 (query_type 은 어느 쪽을 "의도"했는지
+        // 나타낼 뿐 한쪽을 배제하지 않는다). 융합은 순위 기반이라 후보를 넉넉히 뽑아야
+        // 효과가 있어 limit 의 3배까지 조회한다.
+        let candidate_limit = limit * 3;
+        let mut bm25_results: Vec<SearchResult> = Vec::new();
+        let mut vector_results: Vec<SearchResult> = Vec::new();
 
-        for item in &params.queries {
-            match item.query_type {
-                QueryType::Temporal => {}
-                QueryType::Keyword => {
+        let mut seen_queries = std::collections::HashSet::new();
+        let search_queries: Vec<&str> = params
+            .queries
+            .iter()
+            .filter(|q| !matches!(q.query_type, QueryType::Temporal))
+            .map(|q| q.query.as_str())
+            .filter(|q| !q.trim().is_empty() && seen_queries.insert(*q))
+            .collect();
+
+        for query in &search_queries {
+            let results = {
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
+                self.search
+                    .search_bm25(&db, query, &base_filters, candidate_limit)?
+            };
+            bm25_results.extend(results);
+        }
+
+        for query in &search_queries {
+            // 임베딩 실패는 검색 전체를 실패시키지 않는다 — Ollama 다운/모델 미설치 시
+            // BM25 결과만으로 응답한다 (하이브리드를 기본으로 돌리면서 생긴 요구사항).
+            match self.search.embed_query(query).await {
+                Ok(Some(embedding)) => {
                     let results = {
                         let db = self
                             .db
                             .lock()
                             .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
-                        self.search
-                            .search_bm25(&db, &item.query, &base_filters, limit)?
+                        self.search.search_with_embedding(
+                            &db,
+                            &embedding,
+                            candidate_limit,
+                            &base_filters,
+                        )?
                     };
-                    all_results.extend(results);
+                    vector_results.extend(results);
                 }
-                QueryType::Semantic => match self.search.embed_query(&item.query).await {
-                    Ok(Some(embedding)) => {
-                        let results = {
-                            let db = self
-                                .db
-                                .lock()
-                                .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
-                            self.search.search_with_embedding(
-                                &db,
-                                &embedding,
-                                limit,
-                                &base_filters,
-                            )?
-                        };
-                        all_results.extend(results);
-                    }
-                    Ok(None) => {
-                        tracing::info!("vector search disabled (Ollama not available)");
-                    }
-                    Err(e) => {
-                        return Err(anyhow::anyhow!("embedding failed: {e}"));
-                    }
-                },
+                Ok(None) => {
+                    tracing::info!("vector search disabled (Ollama not available)");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "embedding failed, falling back to BM25-only");
+                }
             }
         }
 
-        let has_keyword = params
-            .queries
-            .iter()
-            .any(|q| matches!(q.query_type, QueryType::Keyword));
+        // 같은 모달리티 안에서만 점수 비교가 성립하므로, 모달리티별로 먼저 정리한다
+        // (쿼리를 여러 개 준 경우 같은 turn 이 중복되면 RRF 기여가 이중 계산된다).
+        sort_and_dedup(&mut bm25_results);
+        sort_and_dedup(&mut vector_results);
 
-        if !has_keyword && all_results.is_empty() {
+        if bm25_results.is_empty() && vector_results.is_empty() {
             return Ok(serde_json::json!({ "results": [], "count": 0 }));
         }
 
-        all_results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let mut seen = std::collections::HashSet::new();
-        all_results.retain(|r| seen.insert((r.session_id.clone(), r.turn_index)));
+        // BM25 점수와 코사인 유사도는 척도가 달라 직접 비교하면 한쪽이 상위를 독식할 수
+        // 있다. 둘 다 결과가 있으면 CLI `SearchEngine::search` 와 동일하게 순위 기반
+        // RRF 로 융합한다.
+        let mut all_results = if bm25_results.is_empty() {
+            vector_results
+        } else if vector_results.is_empty() {
+            bm25_results
+        } else {
+            reciprocal_rank_fusion(&bm25_results, &vector_results, RRF_K)
+        };
 
         let max_per = base_filters.max_per_session.unwrap_or(2);
         all_results = diversify_by_session(all_results, max_per);
@@ -1181,7 +1215,9 @@ fn merge_json_object(target: &mut serde_json::Value, patch: &serde_json::Value) 
 #[tool_router]
 impl SeCallMcpServer {
     #[tool(
-        description = "Search agent session history. Use keyword queries for exact terms, semantic queries for conceptual search, or temporal queries for time-based filtering."
+        description = "Search agent session history. Every query runs hybrid search (BM25 + vector, 
+                       fused with Reciprocal Rank Fusion), so a single keyword query already covers 
+                       conceptual matches. Add a temporal query to filter by time."
     )]
     async fn recall(
         &self,
@@ -1450,6 +1486,58 @@ mod tests {
     use crate::search::hybrid::SearchEngine;
     use crate::search::tokenizer::LinderaKoTokenizer;
     use crate::store::db::Database;
+
+    fn sr(session: &str, turn: u32, score: f64) -> crate::search::bm25::SearchResult {
+        crate::search::bm25::SearchResult {
+            session_id: session.to_string(),
+            turn_index: turn,
+            score,
+            bm25_score: Some(score),
+            vector_score: None,
+            snippet: String::new(),
+            metadata: crate::search::bm25::SessionMeta {
+                agent: "claude-code".to_string(),
+                model: None,
+                project: None,
+                date: "2026-01-01".to_string(),
+                vault_path: None,
+                session_type: "interactive".to_string(),
+                is_archived: false,
+                turn_count: 10,
+            },
+        }
+    }
+
+    /// `do_recall` 이 RRF 로 융합하기 전, 모달리티별 결과는 점수 내림차순으로
+    /// 정렬되고 `(session_id, turn_index)` 중복이 제거돼야 한다. 쿼리를 여러 개
+    /// 준 경우 같은 turn 이 남아 있으면 그 turn 의 RRF 기여가 이중 계산된다.
+    #[test]
+    fn sort_and_dedup_orders_by_score_and_removes_duplicate_turns() {
+        let mut results = vec![
+            sr("a", 1, 0.3),
+            sr("b", 2, 0.9),
+            sr("a", 1, 0.8), // 같은 (session, turn) 중복 — 제거 대상
+            sr("c", 3, 0.5),
+        ];
+
+        super::sort_and_dedup(&mut results);
+
+        let keys: Vec<(String, u32)> = results
+            .iter()
+            .map(|r| (r.session_id.clone(), r.turn_index))
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                ("b".to_string(), 2),
+                ("a".to_string(), 1),
+                ("c".to_string(), 3),
+            ],
+            "점수 내림차순 정렬 + 중복 turn 제거가 돼야 한다"
+        );
+        // 중복 중에서는 점수가 높은 쪽(0.8)이 남아야 순위가 정확하다.
+        assert_eq!(results[1].score, 0.8);
+    }
 
     fn make_server() -> SeCallMcpServer {
         let db = Database::open_memory().unwrap();

@@ -297,10 +297,12 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
     }
 
     if turns.is_empty() {
-        return Err(anyhow!(
-            "claude session has no parseable turns: {}",
-            path.display()
-        ));
+        // 손상이 아니라 "대화 턴이 없는" 세션 — ingest 에서 error 가 아닌 skip 으로
+        // 집계되도록 타입이 있는 에러로 반환한다.
+        return Err(crate::error::SecallError::NoTurns {
+            path: path.display().to_string(),
+        }
+        .into());
     }
 
     let id = session_id
@@ -451,6 +453,30 @@ mod tests {
             writeln!(f, "{}", line).unwrap();
         }
         f
+    }
+
+    /// 세션만 열고 대화 없이 끝난 파일은 mode/attachment/system 같은 메타 이벤트만
+    /// 남는다. 손상이 아니므로 ingest 가 error 가 아닌 skip 으로 집계할 수 있도록
+    /// `SecallError::NoTurns` 로 구분돼야 한다.
+    #[test]
+    fn test_meta_only_session_returns_no_turns_error() {
+        let lines = &[
+            r#"{"type":"mode","mode":"default"}"#,
+            r#"{"type":"attachment","path":"a.txt"}"#,
+            r#"{"type":"system","subtype":"init"}"#,
+            r#"{"type":"last-prompt","content":"hi"}"#,
+        ];
+        let f = write_jsonl(lines);
+
+        let err = parse_claude_jsonl(f.path()).expect_err("turn 이 없으면 에러여야 한다");
+
+        assert!(
+            matches!(
+                err.downcast_ref::<crate::error::SecallError>(),
+                Some(crate::error::SecallError::NoTurns { .. })
+            ),
+            "NoTurns 로 분류돼야 skip 집계된다. 실제: {err}"
+        );
     }
 
     #[test]

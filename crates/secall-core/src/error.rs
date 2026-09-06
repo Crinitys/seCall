@@ -20,6 +20,13 @@ pub enum SecallError {
     #[error("unsupported file format: {0}")]
     UnsupportedFormat(String),
 
+    /// 파일은 정상이지만 user/assistant 대화 턴이 하나도 없는 세션.
+    /// 세션을 열기만 하고 대화를 하지 않으면 mode/attachment/system 같은 메타
+    /// 이벤트만 기록된 jsonl 이 남는다. 손상이 아니므로 ingest 에서 error 가 아닌
+    /// skip 으로 집계해야 한다.
+    #[error("session has no conversation turns: {path}")]
+    NoTurns { path: String },
+
     // --- Search ---
     #[error("search error: {0}")]
     Search(String),

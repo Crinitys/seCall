@@ -524,7 +524,9 @@ pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
                 );
                 return try_ollama_fallback_with_ann(config).await;
             }
-            let embedder = OllamaEmbedder::new(Some(base_url), model).with_api_key(api_key);
+            let embedder = OllamaEmbedder::new(Some(base_url), model)
+                .with_api_key(api_key)
+                .with_num_ctx(config.embedding.ollama_num_ctx);
             if embedder.is_available().await {
                 tracing::info!(host = base_url, "Ollama Cloud embedder ready");
                 VectorIndexer::new(Box::new(embedder))
@@ -575,7 +577,8 @@ async fn try_ort_cpu_fallback(config: &Config) -> Option<VectorIndexer> {
 async fn try_ollama_fallback_with_ann(config: &Config) -> Option<VectorIndexer> {
     let base_url = config.embedding.ollama_url.as_deref();
     let model = config.embedding.ollama_model.as_deref();
-    let embedder = OllamaEmbedder::new(base_url, model);
+    let embedder =
+        OllamaEmbedder::new(base_url, model).with_num_ctx(config.embedding.ollama_num_ctx);
     if embedder.is_available().await {
         tracing::info!("Ollama available, vector search enabled");
         let indexer = VectorIndexer::new(Box::new(embedder));

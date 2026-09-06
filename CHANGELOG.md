@@ -2,6 +2,30 @@
 
 > NOTE: 전체 버전 · 개발 Phase 이력의 단일 SSOT. (README 의 "버전 히스토리" 표는 2026-07-02 이 파일로 통합됨.)
 
+## v0.8.0-crinity.nightly.2 (2026-09-07)
+
+> 포크(Crinitys) 나이틀리 빌드.
+
+VRAM 제약 환경 대응(모델 동시 로드 방지 + 컨텍스트 축소) + MCP 검색 품질을 CLI 와 동일한 하이브리드로 정렬.
+
+### ✨ Features
+
+- **MCP `recall` 하이브리드 검색**: 지금까지 RRF 융합은 CLI `secall recall` 에서만 동작했고, MCP 는 쿼리 타입별 결과를 점수로 단순 정렬해 이어붙였다. 이제 temporal 을 뺀 모든 쿼리를 BM25 와 벡터 양쪽에 태우고 CLI 와 같은 Reciprocal Rank Fusion 으로 합친다(후보는 `limit * 3`). 호출자가 keyword 만 보내도 하이브리드가 되며, 임베딩이 실패하면 BM25 결과만으로 응답한다.
+- **Ollama 컨텍스트 길이 제어**: `embedding.ollama_num_ctx` / `graph.num_ctx` (기본 4096). Ollama 는 `num_ctx` 기준으로 KV 캐시를 선할당하므로 모델 기본값(32768)을 그대로 쓰면 0.6B 임베딩 모델이 **5.5GB** 를 점유했다. 4096 으로 **2.2GB** 까지 내려간다. 세션 임베딩은 청크 상한이 3600자라 잘리지 않으며, 페이지를 통째로 임베딩하는 `wiki vectorize` 는 예외로 모델 기본 컨텍스트를 쓴다.
+- **graph LLM `think: false`**: 시맨틱 추출은 고정 스키마 JSON 을 뽑는 작업이라 추론 토큰이 필요 없다. 켜둔 채로는 기본 모델(`gemma4:e4b`)이 추론으로 `num_ctx` 를 소진해 **빈 응답**을 반환했고, 응답 시간이 3배가 되며, 모델에 따라 추론이 content 로 새어나와 JSON 파싱이 깨졌다.
+
+### 🐛 Fixes
+
+- **임베딩 모델 언로드 가드 오류**: `unload_embedding_model_if_needed` 가 graph 백엔드까지 `ollama` 일 것을 요구해, graph 를 lmstudio 등으로 쓰는 설정에서는 언로드가 아예 발사되지 않았다. 그 결과 Ollama 임베딩 모델과 다른 런타임의 LLM 이 VRAM 에 동시에 올라갔다. 이제 임베딩 백엔드만 보고 판단한다.
+- **시맨틱 추출 후 LLM 잔류**: 추출이 끝나도 graph LLM 이 Ollama 기본 keep_alive(5분) 동안 남아 뒤이은 검색·ingest 의 임베딩 모델과 겹쳤다. ingest / graph rebuild / wiki update(=sync 자동 호출) 경로 모두 LLM 사용 전후로 언로드하여 두 모델이 동시에 올라가지 않도록 한다.
+- **대화 턴이 없는 세션이 error 로 집계**: 세션만 열고 대화 없이 끝나면 mode/attachment/system 같은 메타 이벤트만 담긴 jsonl 이 남는다. 손상이 아닌데도 파싱 에러로 세어져 매 sync 마다 WARN 이 쌓였다. `SecallError::NoTurns` 로 구분해 skip 으로 집계하고 로그 레벨을 debug 로 낮춘다.
+
+### 📝 API
+
+- `GET /api/info` 는 이전 나이틀리에서 추가됨. 이번 릴리스는 API 변경 없음.
+
+---
+
 ## v0.8.0-crinity.nightly.1 (2026-09-07)
 
 > 포크(Crinitys) 나이틀리 빌드. upstream 정식 릴리스가 아니며, 버전은 rustc/Node 관례대로 다음 릴리스(0.8.0)에 프리릴리즈 접미사를 붙인 형태다.

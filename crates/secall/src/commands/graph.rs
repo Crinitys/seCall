@@ -8,7 +8,8 @@ use secall_core::{
 };
 
 use super::ingest::{
-    extract_one_session_semantic, unload_embedding_model_if_needed, ExtractOneResult,
+    extract_one_session_semantic, unload_graph_model_if_needed, unload_ollama_embed_model,
+    ExtractOneResult,
 };
 use super::NoopSink;
 
@@ -325,8 +326,9 @@ pub async fn run_rebuild(
         return Ok(GraphRebuildOutcome::default());
     }
 
-    // 2. 임베딩 모델 unload — 시맨틱 추출 진입 시점에 한 번만
-    unload_embedding_model_if_needed(&config).await;
+    // 2. LLM 을 올리기 전에 임베딩 모델을 내린다 — 두 모델이 VRAM 에 동시에
+    //    올라가지 않도록 보장한다.
+    unload_ollama_embed_model(&config).await;
 
     let total = ids.len();
     let mut outcome = GraphRebuildOutcome::default();
@@ -341,6 +343,7 @@ pub async fn run_rebuild(
         if sink.is_cancelled() {
             sink.message(&format!("취소 요청 — {}/{} 처리 후 종료합니다", i, total))
                 .await;
+            unload_graph_model_if_needed(&config).await;
             return Ok(outcome);
         }
         if total > 0 {
@@ -377,6 +380,10 @@ pub async fn run_rebuild(
         outcome.succeeded, outcome.failed, outcome.skipped, outcome.edges_added
     ))
     .await;
+
+    // 추출이 끝났으면 LLM 을 즉시 내린다 — 이후 검색/ingest 의 임베딩 모델과
+    // VRAM 에서 겹치지 않게 한다.
+    unload_graph_model_if_needed(&config).await;
 
     Ok(outcome)
 }

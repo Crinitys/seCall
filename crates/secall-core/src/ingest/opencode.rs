@@ -210,10 +210,12 @@ pub fn parse_opencode_json(path: &Path) -> Result<Session> {
     }
 
     if turns.is_empty() {
-        return Err(anyhow!(
-            "opencode session has no parseable turns: {}",
-            path.display()
-        ));
+        // 손상이 아니라 "대화 턴이 없는" 세션 — ingest 에서 error 가 아닌 skip 으로
+        // 집계되도록 타입이 있는 에러로 반환한다.
+        return Err(crate::error::SecallError::NoTurns {
+            path: path.display().to_string(),
+        }
+        .into());
     }
 
     let _title = export.info.title;

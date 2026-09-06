@@ -480,9 +480,13 @@ pub async fn ingest_sessions(
         && !no_semantic
         && !new_session_ids.is_empty();
     if semantic_enabled {
-        // 임베딩 모델 unload — P37 Task 01: helper 로 분리하여 graph::run_rebuild 와 공유
-        unload_embedding_model_if_needed(config).await;
+        // LLM 을 올리기 전에 임베딩 모델을 내린다 — 두 모델이 VRAM 에 동시에
+        // 올라가지 않도록 보장한다.
+        unload_ollama_embed_model(config).await;
         let cancelled = extract_semantic_edges_batch(config, db, &new_session_ids, sink).await;
+        // 추출이 끝났으면(취소 포함) LLM 도 즉시 내린다 — 이후 검색/ingest 의
+        // 임베딩 모델과 겹치지 않게 한다.
+        unload_graph_model_if_needed(config).await;
         if cancelled {
             return Ok(IngestStats {
                 ingested,
@@ -726,6 +730,13 @@ fn ingest_path(
                 hook_failures,
             );
         }
+        Err(e) if is_no_turns(&e) => {
+            // 대화 턴이 없는 세션 파일(세션만 열고 대화 없이 종료 등)은 손상이 아니라
+            // 인제스트할 내용이 없는 것이므로 skip 으로 집계한다. 매 sync 마다 WARN 이
+            // 쌓이는 것을 막기 위해 로그 레벨도 debug 로 낮춘다.
+            tracing::debug!(path = %session_path.display(), "skipping session with no turns");
+            *skipped += 1;
+        }
         Err(e) => {
             tracing::warn!(path = %session_path.display(), error = %e, "failed to parse session file");
             error_details.push(IngestError {
@@ -736,6 +747,23 @@ fn ingest_path(
             });
             *errors += 1;
         }
+    }
+}
+
+/// 파싱 실패가 "대화 턴 없음"인지 판정. 파서는 `SecallError::NoTurns` 를 반환하지만
+/// `SessionParser::parse` 가 이를 `SecallError::Parse { source }` 로 감싸므로 양쪽을
+/// 모두 확인한다.
+fn is_no_turns(e: &secall_core::error::SecallError) -> bool {
+    use secall_core::error::SecallError;
+    match e {
+        SecallError::NoTurns { .. } => true,
+        SecallError::Parse { source, .. } => {
+            matches!(
+                source.downcast_ref::<SecallError>(),
+                Some(SecallError::NoTurns { .. })
+            )
+        }
+        _ => false,
     }
 }
 
@@ -929,60 +957,61 @@ pub async fn extract_one_session_semantic(
     }
 }
 
-/// P37 Task 01 — 시맨틱 추출 직전 임베딩 모델 unload.
+/// Ollama 에서 지정 모델을 즉시 내린다(`keep_alive: 0`).
 ///
-/// 16GB 시스템에서 qwen3-embedding(임베딩) 와 gemma4(LLM) 동시 로드 시
-/// OOM 위험을 줄이기 위해 시맨틱 backend 가 ollama 인 경우에만 발사.
-/// ingest 와 graph rebuild 둘 다 진입 시점에 한 번 호출한다.
-pub async fn unload_embedding_model_if_needed(config: &Config) {
-    if config.embedding.backend != "ollama" || config.graph.semantic_backend != "ollama" {
-        return;
-    }
-    let embed_model = config
-        .embedding
-        .ollama_model
-        .as_deref()
-        .unwrap_or("qwen3-embedding:0.6b");
-    let ollama_url = config
-        .embedding
-        .ollama_url
-        .as_deref()
-        .unwrap_or("http://localhost:11434");
+/// 실패는 무시한다 — Ollama 가 꺼져 있거나 모델이 이미 내려간 정상 상황이며,
+/// 언로드 실패로 본 작업을 멈출 이유가 없다.
+pub async fn unload_ollama_model(ollama_url: &str, model: &str, reason: &str) {
     let unload_url = format!("{}/api/generate", ollama_url.trim_end_matches('/'));
-    let body = serde_json::json!({"model": embed_model, "keep_alive": 0});
+    let body = serde_json::json!({"model": model, "keep_alive": 0});
     match secall_core::http_post_json(&unload_url, &body).await {
-        Ok(_) => tracing::debug!(
-            model = embed_model,
-            "unloaded embedding model before semantic extraction"
-        ),
-        Err(e) => tracing::debug!(model = embed_model, "embedding model unload skipped: {}", e),
+        Ok(_) => tracing::debug!(model, reason, "unloaded ollama model"),
+        Err(e) => tracing::debug!(model, reason, error = %e, "ollama model unload skipped"),
     }
 }
 
-/// P47 — embed 단계 종료 후 Ollama embedding 모델 즉시 unload.
-/// graph semantic 단계 진입 여부와 무관하게 ollama 백엔드 사용 시 항상 호출.
+/// 임베딩 모델을 내린다. embed 단계 종료 직후와 graph LLM 호출 직전에 부른다.
+///
+/// graph 백엔드가 ollama 가 아니어도(lmstudio 등) 반드시 내려야 한다 — 그렇지 않으면
+/// Ollama 의 임베딩 모델과 다른 런타임의 LLM 이 VRAM 에 동시에 올라간다.
 /// cloud / ort / openvino / openai 는 keep_alive 개념이 없으므로 early return.
 pub async fn unload_ollama_embed_model(config: &Config) {
     if config.embedding.backend != "ollama" {
         return;
     }
-    let embed_model = config
+    let model = config
         .embedding
         .ollama_model
         .as_deref()
-        .unwrap_or("qwen3-embedding:0.6b");
-    let ollama_url = config
+        .unwrap_or(secall_core::search::embedding::DEFAULT_OLLAMA_EMBED_MODEL);
+    let url = config
         .embedding
         .ollama_url
         .as_deref()
         .unwrap_or("http://localhost:11434");
-    let unload_url = format!("{}/api/generate", ollama_url.trim_end_matches('/'));
-    let body = serde_json::json!({"model": embed_model, "keep_alive": 0});
-    if let Err(e) = secall_core::http_post_json(&unload_url, &body).await {
-        tracing::debug!(model = embed_model, error = %e, "embed model unload skipped");
-    } else {
-        tracing::debug!(model = embed_model, "unloaded embedding model after ingest");
+    unload_ollama_model(url, model, "embedding done").await;
+}
+
+/// graph 시맨틱 추출용 LLM 을 내린다. 추출 배치가 끝난 직후에 부른다.
+///
+/// 내리지 않으면 Ollama 기본 keep_alive(5분) 동안 VRAM 에 남아, 곧이어 들어오는
+/// 검색·ingest 의 임베딩 모델과 동시에 올라간다. lmstudio 등 다른 런타임은
+/// 언로드 API 가 없으므로 대상이 아니다.
+pub async fn unload_graph_model_if_needed(config: &Config) {
+    if config.graph.semantic_backend != "ollama" {
+        return;
     }
+    let model = config
+        .graph
+        .ollama_model
+        .as_deref()
+        .unwrap_or(secall_core::llm::defaults::GRAPH_OLLAMA_DEFAULT);
+    let url = config
+        .graph
+        .ollama_url
+        .as_deref()
+        .unwrap_or("http://localhost:11434");
+    unload_ollama_model(url, model, "semantic extraction done").await;
 }
 
 /// 분류 규칙 — regex 패턴 또는 project 이름 매칭
@@ -1276,6 +1305,113 @@ fn find_session_by_id(id: &str) -> Result<Vec<PathBuf>> {
 mod tests {
     use super::*;
     use regex::Regex;
+
+    /// `SessionParser::parse` 가 파서 에러를 `SecallError::Parse { source }` 로 감싸므로,
+    /// 감싸인 상태에서도 "턴 없음"으로 분류돼야 skip 집계가 동작한다. 이 판정이 깨지면
+    /// 대화 없는 세션 파일이 다시 error 로 세어지고 매 sync 마다 WARN 이 쌓인다.
+    #[test]
+    fn test_is_no_turns_detects_wrapped_and_bare() {
+        use secall_core::error::SecallError;
+
+        let bare = SecallError::NoTurns {
+            path: "a.jsonl".to_string(),
+        };
+        assert!(is_no_turns(&bare), "bare NoTurns 는 참이어야 한다");
+
+        let wrapped = SecallError::Parse {
+            path: "a.jsonl".to_string(),
+            source: SecallError::NoTurns {
+                path: "a.jsonl".to_string(),
+            }
+            .into(),
+        };
+        assert!(is_no_turns(&wrapped), "Parse 로 감싸여도 참이어야 한다");
+
+        // 진짜 파싱 실패는 그대로 error 로 남아야 한다.
+        let real_failure = SecallError::Parse {
+            path: "a.jsonl".to_string(),
+            source: anyhow::anyhow!("invalid json at line 3"),
+        };
+        assert!(
+            !is_no_turns(&real_failure),
+            "일반 파싱 실패는 error 로 남아야 한다"
+        );
+        assert!(!is_no_turns(&SecallError::UnsupportedFormat("x".into())));
+    }
+
+    /// graph 백엔드가 ollama 가 아니어도(lmstudio 등) 임베딩 모델은 반드시 내려야
+    /// 한다 — 그렇지 않으면 Ollama 임베딩 모델과 다른 런타임의 LLM 이 VRAM 에
+    /// 동시에 올라간다. 과거 이 가드가 `graph 백엔드 == ollama` 를 함께 요구해
+    /// lmstudio 사용자에게는 언로드가 아예 발사되지 않았다.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_unload_embed_model_fires_even_when_graph_backend_is_not_ollama() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/generate")
+            .match_body(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::Regex(r#""model":"qwen3-embedding:0.6b""#.to_string()),
+                mockito::Matcher::Regex(r#""keep_alive":0"#.to_string()),
+            ]))
+            .with_status(200)
+            .with_body("{}")
+            .create_async()
+            .await;
+
+        let mut config = Config::default();
+        config.embedding.backend = "ollama".to_string();
+        config.embedding.ollama_url = Some(server.url());
+        config.graph.semantic_backend = "lmstudio".to_string();
+
+        unload_ollama_embed_model(&config).await;
+
+        mock.assert_async().await;
+    }
+
+    /// 시맨틱 추출이 끝나면 graph LLM 도 내려야 keep_alive(기본 5분) 동안 VRAM 에
+    /// 남아 이후 임베딩과 겹치는 일이 없다.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_unload_graph_model_fires_for_ollama_backend() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/generate")
+            .match_body(mockito::Matcher::Regex(r#""keep_alive":0"#.to_string()))
+            .with_status(200)
+            .with_body("{}")
+            .create_async()
+            .await;
+
+        let mut config = Config::default();
+        config.graph.semantic_backend = "ollama".to_string();
+        config.graph.ollama_url = Some(server.url());
+
+        unload_graph_model_if_needed(&config).await;
+
+        mock.assert_async().await;
+    }
+
+    /// ollama 가 아닌 백엔드는 언로드 API 가 없으므로 호출 자체가 없어야 한다.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_unload_skips_non_ollama_backends() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/generate")
+            .expect(0)
+            .with_status(200)
+            .with_body("{}")
+            .create_async()
+            .await;
+
+        let mut config = Config::default();
+        config.embedding.backend = "ort".to_string();
+        config.embedding.ollama_url = Some(server.url());
+        config.graph.semantic_backend = "lmstudio".to_string();
+        config.graph.ollama_url = Some(server.url());
+
+        unload_ollama_embed_model(&config).await;
+        unload_graph_model_if_needed(&config).await;
+
+        mock.assert_async().await;
+    }
 
     fn pattern_rules(patterns: &[(&str, &str)]) -> Vec<CompiledRule> {
         patterns
