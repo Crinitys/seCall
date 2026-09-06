@@ -37,9 +37,11 @@ Agents: {agents}
 Vector search: {vector_status}
 
 ## Usage Tips
-- Use `recall` with keyword type for exact term matches (BM25)
-- Use `recall` with semantic type for conceptual search (requires embeddings)
-- Combine keyword + semantic queries for best results
+- `recall` runs hybrid search (BM25 + vector, fused with Reciprocal Rank Fusion) for every
+  query, so a single query already covers both exact terms and conceptual matches
+- query type is a hint, not a restriction — send one query unless you want several distinct
+  phrasings searched at once
+- Add a temporal query to narrow the time range (it filters, it does not search)
 - Use `get` with session_id:N to read a specific turn
 - Filter by project or agent when searching across many sessions
 
@@ -50,10 +52,9 @@ Vector search: {vector_status}
 - `wiki_search` — search wiki knowledge pages by query; optional `category` filter (projects/topics/decisions){graph_tool_line}
 
 ## Example Queries
-- Keyword: {{"queries": [{{"type": "keyword", "query": "SQLite FTS5"}}]}}
-- Semantic: {{"queries": [{{"type": "semantic", "query": "how to design database schema"}}]}}
-- Combined: {{"queries": [{{"type": "keyword", "query": "kiwi-rs"}}, {{"type": "semantic", "query": "Korean tokenizer comparison"}}]}}
-- Temporal: {{"queries": [{{"type": "temporal", "query": "yesterday"}}, {{"type": "keyword", "query": "bugfix"}}]}}
+- Single query (hybrid): {{"queries": [{{"type": "keyword", "query": "SQLite FTS5"}}]}}
+- Multiple phrasings: {{"queries": [{{"type": "keyword", "query": "kiwi-rs"}}, {{"type": "semantic", "query": "Korean tokenizer comparison"}}]}}
+- Time-ranged: {{"queries": [{{"type": "temporal", "query": "yesterday"}}, {{"type": "keyword", "query": "bugfix"}}]}}
 - Wiki: {{"query": "tunadish", "category": "projects", "limit": 3}}
 {graph_section}"#,
         session_count = session_count,
