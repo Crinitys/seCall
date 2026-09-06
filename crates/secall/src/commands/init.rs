@@ -59,7 +59,7 @@ fn run_interactive() -> Result<()> {
     let mut config = Config::load_or_default();
 
     // Step 1: Vault 경로
-    println!("  Step 1/7: Vault 경로");
+    println!("  Step 1/8: Vault 경로");
     println!("  Obsidian vault 경로를 입력하세요");
     let vault_default = config.vault.path.to_string_lossy().to_string();
     let vault_input: String = Input::new()
@@ -71,7 +71,7 @@ fn run_interactive() -> Result<()> {
     println!();
 
     // Step 2: Git remote
-    println!("  Step 2/7: Git 동기화 (선택)");
+    println!("  Step 2/8: Git 동기화 (선택)");
     println!("  멀티 기기 동기화를 위한 Git remote URL");
     println!("  없으면 Enter를 누르세요");
     let git_default = config.vault.git_remote.clone().unwrap_or_default();
@@ -90,7 +90,7 @@ fn run_interactive() -> Result<()> {
 
     // Step 3: Git 브랜치 (git remote 설정 시만 표시)
     if git_remote.is_some() {
-        println!("  Step 3/7: Git 브랜치");
+        println!("  Step 3/8: Git 브랜치");
         let branch_input: String = Input::new()
             .with_prompt("  >")
             .default(config.vault.branch.clone())
@@ -100,7 +100,7 @@ fn run_interactive() -> Result<()> {
     }
 
     // Step 4: 토크나이저
-    println!("  Step 4/7: 토크나이저");
+    println!("  Step 4/8: 토크나이저");
     #[cfg(not(target_os = "windows"))]
     let tokenizer_items = vec![
         "lindera — 한국어+일본어 형태소 분석 (범용)",
@@ -144,7 +144,7 @@ fn run_interactive() -> Result<()> {
     println!();
 
     // Step 5: 임베딩 백엔드
-    println!("  Step 5/7: 임베딩 백엔드");
+    println!("  Step 5/8: 임베딩 백엔드");
     let backend_items = vec![
         "ollama — 로컬 임베딩 (qwen3-embedding:0.6b, 무료)",
         "none — 벡터 검색 비활성화 (BM25만 사용)",
@@ -173,13 +173,13 @@ fn run_interactive() -> Result<()> {
 
     // Step 6: Ollama 확인 (ollama 선택 시만)
     if config.embedding.backend == "ollama" {
-        println!("  Step 6/7: Ollama 설정");
+        println!("  Step 6/8: Ollama 설정");
         check_and_setup_ollama()?;
         println!();
     }
 
     // Step 7: ingest 제외 경로 패턴
-    println!("  Step 7/7: Ingest 제외 경로 패턴");
+    println!("  Step 7/8: Ingest 제외 경로 패턴");
     println!("  ~/.claude/projects 하위에서 이 문자열이 포함된 폴더는 ingest 대상에서 제외됩니다");
     println!("  (예: claude-mem 옵저버 세션 폴더 제외 → claude-mem 입력)");
     println!("  쉼표(,)로 여러 개 입력 가능, 없으면 Enter를 누르세요");
@@ -194,6 +194,40 @@ fn run_interactive() -> Result<()> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
+    println!();
+
+    // Step 8: Knowledge Graph 시맨틱 추출 백엔드
+    println!("  Step 8/8: Knowledge Graph 시맨틱 추출");
+    println!("  세션에서 관계(엣지)를 뽑을 때 LLM 을 쓸지 선택합니다");
+    println!("  ※ 규칙 기반 추출은 어떤 선택에서도 항상 동작합니다");
+    let graph_items = vec![
+        "ollama — 로컬 LLM (gemma4:e4b, VRAM 약 4.4GB 필요)",
+        "disabled — LLM 미사용, 규칙 기반 엣지만 생성",
+        "ollama_cloud — Ollama Cloud (OLLAMA_CLOUD_API_KEY 필요)",
+    ];
+    let graph_default = match config.graph.semantic_backend.as_str() {
+        "disabled" => 1usize,
+        "ollama_cloud" => 2usize,
+        _ => 0usize,
+    };
+    let graph_sel = Select::new()
+        .with_prompt("  선택")
+        .items(&graph_items)
+        .default(graph_default)
+        .interact()?;
+    config.graph.semantic_backend = match graph_sel {
+        1 => "disabled".to_string(),
+        2 => "ollama_cloud".to_string(),
+        _ => "ollama".to_string(),
+    };
+    // 모델은 백엔드별 코드 기본값을 쓰도록 비워둔다 — 백엔드를 바꿨는데 이전
+    // 백엔드용 모델명이 남아 있으면 존재하지 않는 모델을 부르게 된다.
+    config.graph.ollama_model = None;
+    if config.graph.semantic_backend == "ollama" {
+        println!("  → 로컬 LLM 사용: `ollama pull gemma4:e4b` 로 모델을 준비하세요.");
+        println!("    VRAM 이 빠듯하면 훅에서는 `--no-semantic` 으로 제외하고");
+        println!("    여유 있을 때 `secall graph rebuild --retry-failed` 로 채우면 됩니다.");
+    }
     println!();
 
     // 설정 저장
