@@ -112,6 +112,14 @@
 - PR #115 — zero-turn 세션 비파괴 healing (`reindex --repair-missing-turns` + embed vault 폴백 + 경로 canonical, Gemini 리뷰 3건 반영)
 - PR #116 — README 슬림화(798→729줄) + API 문서 분리(`docs/reference/api.md`) + 버전이력 CHANGELOG 통합
 - CodeRabbit 자동 PR 리뷰 도입 — Gemini Code Assist 2026-07-17 종료 대체 (공개 레포 무료). PR #117 로 동작 검증 (CodeRabbit + Gemini 둘 다 동일 SSE 오류 잡음). **P3 해결.**
+- 포크 나이틀리 v0.8.0-crinity.nightly.1~3 (2026-09-07, `Crinitys/seCall` 전용 — upstream 미반영). 상세: `docs/reference/handoff_2026-09-07.md`
+  - `ingest.exclude_patterns` — claude-mem 옵저버 세션 등 경로 패턴 제외 (init Step 7)
+  - `secall mcp` 가 Web UI 자동 기동 + `/api/info` probe 기반 single-instance (세션마다 웹 서버가 늘어나던 문제)
+  - VRAM: `embedding.ollama_num_ctx` / `graph.num_ctx` (기본 4096) — 임베딩 5.5GB→2.2GB. graph LLM `think: false` (빈 응답/3배 지연/파싱 실패 해소)
+  - 모델 동시 로드 방지 — LLM 사용 전후 언로드. 기존 가드가 graph 백엔드까지 ollama 를 요구해 lmstudio 설정에서 발사되지 않던 버그 수정
+  - MCP `recall` 하이브리드 + RRF 융합 (그동안 CLI 에서만 동작하던 것)
+  - 턴 0개 세션을 `SecallError::NoTurns` 로 skip 강등 (sync 마다 쌓이던 WARN 제거)
+  - init Step 8 — Knowledge Graph 시맨틱 백엔드 선택
 
 ### In Progress
 
