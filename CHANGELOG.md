@@ -2,6 +2,16 @@
 
 > NOTE: 전체 버전 · 개발 Phase 이력의 단일 SSOT. (README 의 "버전 히스토리" 표는 2026-07-02 이 파일로 통합됨.)
 
+## v0.8.0-crinity.nightly.3 (2026-09-07)
+
+> 포크(Crinitys) 나이틀리 빌드.
+
+### ✨ Features
+
+- **`secall init` 에 Knowledge Graph 시맨틱 백엔드 선택 추가** (Step 8): `graph.semantic_backend` 의 코드 기본값은 `ollama_cloud` 라 API 키 없이는 동작하지 않는데, init 이 이 값을 묻지 않아 로컬 사용자는 설정 파일을 직접 편집해야 했다. 이제 로컬 `ollama`(권장) / `disabled` / `ollama_cloud` 중에서 고른다. 백엔드를 바꿀 때 `graph.ollama_model` 을 비워 이전 백엔드용 모델명이 남아 존재하지 않는 모델을 호출하는 일을 막고, `ollama` 선택 시 모델 준비 명령과 VRAM 이 빠듯할 때의 운용법을 안내한다.
+
+---
+
 ## v0.8.0-crinity.nightly.2 (2026-09-07)
 
 > 포크(Crinitys) 나이틀리 빌드.
