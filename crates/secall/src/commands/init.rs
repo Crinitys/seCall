@@ -59,7 +59,7 @@ fn run_interactive() -> Result<()> {
     let mut config = Config::load_or_default();
 
     // Step 1: Vault 경로
-    println!("  Step 1/6: Vault 경로");
+    println!("  Step 1/7: Vault 경로");
     println!("  Obsidian vault 경로를 입력하세요");
     let vault_default = config.vault.path.to_string_lossy().to_string();
     let vault_input: String = Input::new()
@@ -71,7 +71,7 @@ fn run_interactive() -> Result<()> {
     println!();
 
     // Step 2: Git remote
-    println!("  Step 2/6: Git 동기화 (선택)");
+    println!("  Step 2/7: Git 동기화 (선택)");
     println!("  멀티 기기 동기화를 위한 Git remote URL");
     println!("  없으면 Enter를 누르세요");
     let git_default = config.vault.git_remote.clone().unwrap_or_default();
@@ -90,7 +90,7 @@ fn run_interactive() -> Result<()> {
 
     // Step 3: Git 브랜치 (git remote 설정 시만 표시)
     if git_remote.is_some() {
-        println!("  Step 3/6: Git 브랜치");
+        println!("  Step 3/7: Git 브랜치");
         let branch_input: String = Input::new()
             .with_prompt("  >")
             .default(config.vault.branch.clone())
@@ -100,7 +100,7 @@ fn run_interactive() -> Result<()> {
     }
 
     // Step 4: 토크나이저
-    println!("  Step 4/6: 토크나이저");
+    println!("  Step 4/7: 토크나이저");
     #[cfg(not(target_os = "windows"))]
     let tokenizer_items = vec![
         "lindera — 한국어+일본어 형태소 분석 (범용)",
@@ -144,7 +144,7 @@ fn run_interactive() -> Result<()> {
     println!();
 
     // Step 5: 임베딩 백엔드
-    println!("  Step 5/6: 임베딩 백엔드");
+    println!("  Step 5/7: 임베딩 백엔드");
     let backend_items = vec![
         "ollama — 로컬 임베딩 (qwen3-embedding:0.6b, 무료)",
         "none — 벡터 검색 비활성화 (BM25만 사용)",
@@ -173,10 +173,28 @@ fn run_interactive() -> Result<()> {
 
     // Step 6: Ollama 확인 (ollama 선택 시만)
     if config.embedding.backend == "ollama" {
-        println!("  Step 6/6: Ollama 설정");
+        println!("  Step 6/7: Ollama 설정");
         check_and_setup_ollama()?;
         println!();
     }
+
+    // Step 7: ingest 제외 경로 패턴
+    println!("  Step 7/7: Ingest 제외 경로 패턴");
+    println!("  ~/.claude/projects 하위에서 이 문자열이 포함된 폴더는 ingest 대상에서 제외됩니다");
+    println!("  (예: claude-mem 옵저버 세션 폴더 제외 → claude-mem 입력)");
+    println!("  쉼표(,)로 여러 개 입력 가능, 없으면 Enter를 누르세요");
+    let exclude_default = config.ingest.exclude_patterns.join(",");
+    let exclude_input: String = Input::new()
+        .with_prompt("  >")
+        .default(exclude_default)
+        .allow_empty(true)
+        .interact_text()?;
+    config.ingest.exclude_patterns = exclude_input
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    println!();
 
     // 설정 저장
     config.save()?;

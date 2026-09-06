@@ -55,6 +55,10 @@ pub struct IngestConfig {
     pub tool_output_max_chars: usize,
     pub thinking_included: bool,
     pub classification: ClassificationConfig,
+    /// project 디렉터리 경로에 이 문자열들 중 하나라도 포함되면 ingest discovery에서
+    /// 서브트리 전체를 제외한다 (예: claude-mem observer 세션 폴더). `secall init`
+    /// 에서 프롬프트로 채워진다.
+    pub exclude_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -334,6 +338,7 @@ impl Default for IngestConfig {
             tool_output_max_chars: 500,
             thinking_included: true,
             classification: ClassificationConfig::default(),
+            exclude_patterns: Vec::new(),
         }
     }
 }

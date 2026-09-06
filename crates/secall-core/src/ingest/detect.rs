@@ -139,20 +139,35 @@ pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
 /// subtrees must be pruned during discovery. `subagents` holds tunaFlow
 /// workflow artifacts (journal.jsonl / agent-*.jsonl) that would otherwise be
 /// mis-ingested as spurious sessions; `.git` / `node_modules` are noise.
-fn is_pruned_dir(entry: &walkdir::DirEntry) -> bool {
+/// `exclude_patterns` 는 `config.ingest.exclude_patterns` (secall init 프롬프트로
+/// 설정) — 경로 문자열에 포함되면 서브트리 전체를 제외한다.
+fn is_pruned_dir(entry: &walkdir::DirEntry, exclude_patterns: &[String]) -> bool {
     // depth 0 = walk 루트 자체. 루트가 우연히 subagents/.git 등으로 명명돼도
     // prune 하면 전체 탐색이 즉시 중단되므로, 루트는 항상 제외(리뷰 반영).
-    entry.depth() > 0
-        && entry.file_type().is_dir()
-        && entry
-            .file_name()
-            .to_str()
-            .map(|n| matches!(n, "subagents" | ".git" | "node_modules"))
-            .unwrap_or(false)
+    if entry.depth() == 0 || !entry.file_type().is_dir() {
+        return false;
+    }
+    let Some(name) = entry.file_name().to_str() else {
+        return false;
+    };
+    if matches!(name, "subagents" | ".git" | "node_modules") {
+        return true;
+    }
+    exclude_patterns
+        .iter()
+        .any(|pat| !pat.is_empty() && name.contains(pat.as_str()))
 }
 
 /// Find all Claude Code session files under the given base directory
 pub fn find_claude_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBuf>> {
+    find_claude_sessions_excluding(base, &[])
+}
+
+/// `find_claude_sessions` + `config.ingest.exclude_patterns` 서브트리 prune.
+pub fn find_claude_sessions_excluding(
+    base: Option<&Path>,
+    exclude_patterns: &[String],
+) -> Result<Vec<std::path::PathBuf>> {
     let default_base;
     let base = match base {
         Some(b) => b,
@@ -172,7 +187,7 @@ pub fn find_claude_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBu
     let mut paths = Vec::new();
     for entry in walkdir::WalkDir::new(base)
         .into_iter()
-        .filter_entry(|e| !is_pruned_dir(e))
+        .filter_entry(|e| !is_pruned_dir(e, exclude_patterns))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();
@@ -204,7 +219,7 @@ pub fn find_codex_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBuf
     let mut paths = Vec::new();
     for entry in walkdir::WalkDir::new(base)
         .into_iter()
-        .filter_entry(|e| !is_pruned_dir(e))
+        .filter_entry(|e| !is_pruned_dir(e, &[]))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();
@@ -236,7 +251,7 @@ pub fn find_gemini_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBu
     let mut paths = Vec::new();
     for entry in walkdir::WalkDir::new(base)
         .into_iter()
-        .filter_entry(|e| !is_pruned_dir(e))
+        .filter_entry(|e| !is_pruned_dir(e, &[]))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();

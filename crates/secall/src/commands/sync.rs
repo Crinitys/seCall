@@ -541,7 +541,7 @@ async fn run_auto_ingest(
     sink: &dyn ProgressSink,
 ) -> Result<IngestStats> {
     use secall_core::ingest::detect::{
-        find_claude_sessions, find_codex_sessions, find_gemini_sessions,
+        find_claude_sessions_excluding, find_codex_sessions, find_gemini_sessions,
     };
 
     let tok = create_tokenizer(&config.search.tokenizer)
@@ -549,7 +549,7 @@ async fn run_auto_ingest(
     let vector_indexer = secall_core::search::vector::create_vector_indexer(config).await;
     let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
 
-    let mut paths = find_claude_sessions(None)?;
+    let mut paths = find_claude_sessions_excluding(None, &config.ingest.exclude_patterns)?;
     paths.extend(find_codex_sessions(None)?);
     paths.extend(find_gemini_sessions(None)?);
 

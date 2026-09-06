@@ -5,8 +5,8 @@ use secall_core::{
     hooks::run_post_ingest_hook,
     ingest::{
         detect::{
-            detect_parser, find_claude_sessions, find_codex_sessions, find_gemini_sessions,
-            find_sessions_for_cwd,
+            detect_parser, find_claude_sessions_excluding, find_codex_sessions,
+            find_gemini_sessions, find_sessions_for_cwd,
         },
         AgentKind,
     },
@@ -113,7 +113,12 @@ pub async fn run(
     let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
 
     // Collect paths to ingest
-    let paths = collect_paths(path.as_deref(), auto, cwd.as_deref())?;
+    let paths = collect_paths(
+        path.as_deref(),
+        auto,
+        cwd.as_deref(),
+        &config.ingest.exclude_patterns,
+    )?;
 
     if paths.is_empty() {
         println!("No sessions to ingest.");
@@ -243,7 +248,12 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
 
     // ── detect phase ──
     sink.phase_start("detect").await;
-    let paths = collect_paths(path.as_deref(), auto, cwd.as_deref())?;
+    let paths = collect_paths(
+        path.as_deref(),
+        auto,
+        cwd.as_deref(),
+        &config.ingest.exclude_patterns,
+    )?;
     sink.message(&format!("Detected {} session file(s).", paths.len()))
         .await;
     sink.phase_complete("detect", Some(serde_json::json!({ "count": paths.len() })))
@@ -1196,13 +1206,18 @@ fn ingest_single_session(
     }
 }
 
-fn collect_paths(path: Option<&str>, auto: bool, cwd: Option<&Path>) -> Result<Vec<PathBuf>> {
+fn collect_paths(
+    path: Option<&str>,
+    auto: bool,
+    cwd: Option<&Path>,
+    exclude_patterns: &[String],
+) -> Result<Vec<PathBuf>> {
     if auto {
         if let Some(cwd) = cwd {
             find_sessions_for_cwd(cwd)
         } else {
             // Collect sessions from all supported agents
-            let mut paths = find_claude_sessions(None)?;
+            let mut paths = find_claude_sessions_excluding(None, exclude_patterns)?;
             paths.extend(find_codex_sessions(None)?);
             paths.extend(find_gemini_sessions(None)?);
             Ok(paths)
@@ -1212,7 +1227,7 @@ fn collect_paths(path: Option<&str>, auto: bool, cwd: Option<&Path>) -> Result<V
         if pb.is_file() {
             Ok(vec![pb])
         } else if pb.is_dir() {
-            let mut paths = find_claude_sessions(Some(&pb))?;
+            let mut paths = find_claude_sessions_excluding(Some(&pb), exclude_patterns)?;
             paths.extend(find_codex_sessions(Some(&pb))?);
             paths.extend(find_gemini_sessions(Some(&pb))?);
             Ok(paths)
