@@ -631,6 +631,7 @@ fn ingest_path(
                         engine,
                         vault,
                         session,
+                        session_path,
                         format,
                         min_turns,
                         force,
@@ -717,6 +718,7 @@ fn ingest_path(
                 engine,
                 vault,
                 session,
+                session_path,
                 format,
                 min_turns,
                 force,
@@ -1060,6 +1062,7 @@ fn ingest_single_session(
     engine: &SearchEngine,
     vault: &Vault,
     mut session: secall_core::ingest::Session,
+    source_path: &std::path::Path,
     format: &OutputFormat,
     min_turns: usize,
     force: bool,
@@ -1214,7 +1217,7 @@ fn ingest_single_session(
     };
 
     let abs_path = config.vault.path.join(&rel_path);
-    print_ingest_result(&session, &abs_path, &index_stats, format);
+    print_ingest_result(&session, &abs_path, source_path, &index_stats, format);
     *ingested += 1;
     new_session_ids.push(session.id.clone());
 

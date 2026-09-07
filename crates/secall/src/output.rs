@@ -53,6 +53,7 @@ pub fn print_search_results(results: &[SearchResult], format: &OutputFormat) {
 pub fn print_ingest_result(
     session: &secall_core::ingest::Session,
     vault_path: &std::path::Path,
+    source_path: &std::path::Path,
     stats: &secall_core::search::IndexStats,
     format: &OutputFormat,
 ) {
@@ -71,6 +72,7 @@ pub fn print_ingest_result(
                 format_token_count(session.total_tokens.output),
             );
             println!("  File:    {}", vault_path.display());
+            println!("  Source:  {}", source_path.display());
             println!("  BM25:    {} turns indexed", stats.turns_indexed);
             if stats.chunks_embedded > 0 {
                 println!("  Vectors: {} chunks embedded", stats.chunks_embedded);
@@ -79,7 +81,7 @@ pub fn print_ingest_result(
         OutputFormat::Json => {
             // JSON 모드에서는 세션별 이벤트를 출력하지 않음.
             // run()에서 단일 summary JSON을 출력하여 top-level JSON 문서가 하나만 나오도록 함.
-            let _ = (session, vault_path, stats);
+            let _ = (session, vault_path, source_path, stats);
         }
     }
 }
