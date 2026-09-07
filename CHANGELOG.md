@@ -2,6 +2,20 @@
 
 > NOTE: 전체 버전 · 개발 Phase 이력의 단일 SSOT. (README 의 "버전 히스토리" 표는 2026-07-02 이 파일로 통합됨.)
 
+## v0.8.0-crinity.nightly.4 (2026-09-07)
+
+> 포크(Crinitys) 나이틀리 빌드.
+
+### ✨ Features
+
+- **ingest 출력에 소스 파일 경로 추가**: 세션 인제스트 결과 블록이 vault 산출물 경로(`File:`)만 보여줘서, 예기치 않은 세션이 대량으로 들어올 때 어떤 원본 파일에서 나왔는지 추적할 수 없었다. `File:` 아래에 `Source:` 라인으로 파싱한 원본 세션 파일 경로를 출력한다. 호출부에 이미 있던 `session_path` 를 그대로 전달하므로 파싱/저장 경로 변경은 없고, JSON 포맷 출력은 종전과 동일하다.
+
+### 📝 Docs
+
+- **핸드오프 추가** (`docs/reference/handoff_2026-09-07_session2.md`): 세션이 "session restore" 에서 멈추던 현상의 원인 규명 기록. Orca 의 codex 세션 백필이 자체 격리 홈에서 `~/.codex/sessions` 로 141개를 하드링크해 두어, SessionStart 훅의 `secall sync` 가 매번 그것들을 임베딩하며 세션 진입을 막고 있었다. `--no-semantic` 이 임베딩을 끄지 않는다는 점, 진행 표시·취소가 Web UI 에만 있다는 점, `find_codex_sessions` 가 `exclude_patterns` 를 적용하지 않는다는 제약을 함께 정리했다.
+
+---
+
 ## v0.8.0-crinity.nightly.3 (2026-09-07)
 
 > 포크(Crinitys) 나이틀리 빌드.

@@ -12,7 +12,7 @@ strip = true
 # 포크(Crinitys) 나이틀리. rustc/Node 관례대로 "다음 릴리즈" 버전에 프리릴리즈를
 # 붙여, upstream 정식 0.7.0 보다 뒤(0.7.0 < 0.8.0-crinity.nightly.N < 0.8.0)로
 # 정렬되게 한다. 나이틀리 빌드마다 끝 시퀀스를 올린다.
-version = "0.8.0-crinity.nightly.3"
+version = "0.8.0-crinity.nightly.4"
 edition = "2021"
 rust-version = "1.75"
 license = "AGPL-3.0"
