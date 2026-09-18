@@ -237,6 +237,23 @@ impl VectorIndexer {
         })
     }
 
+    /// 쿼리 텍스트를 임베딩 모델이 기대하는 형식으로 감싼다.
+    /// Qwen3-Embedding 은 쿼리 쪽에 `Instruct: ...\nQuery: ...` 프리픽스를
+    /// 요구하는 비대칭 인코딩으로 훈련됐다(문서 쪽은 날것). 프리픽스 없이
+    /// 쿼리를 임베딩하면 문서와 다른 공간에 떨어져 관련/무관 분리가 안 된다.
+    /// 문서 임베딩(index 경로)은 절대 이 함수를 거치지 않으므로 저장 벡터와
+    /// 호환된다 — 즉 이 변경에 재임베딩이 필요 없다.
+    fn format_query(&self, query: &str) -> String {
+        if self.embedder.model_name().contains("qwen3") {
+            format!(
+                "Instruct: Given a search query, retrieve relevant conversation \
+                 turns from past coding sessions\nQuery: {query}"
+            )
+        } else {
+            query.to_string()
+        }
+    }
+
     pub async fn search(
         &self,
         db: &Database,
@@ -245,14 +262,14 @@ impl VectorIndexer {
         filters: &SearchFilters,
         candidate_session_ids: Option<&[String]>,
     ) -> Result<Vec<SearchResult>> {
-        let query_embedding = self.embedder.embed(query).await?;
+        let query_embedding = self.embedder.embed(&self.format_query(query)).await?;
         // ANN-aware 경로를 공통으로 사용
         self.search_with_embedding(db, &query_embedding, limit, filters, candidate_session_ids)
     }
 
     /// Embed a query string without DB access (safe to call before locking DB mutex).
     pub async fn embed_query(&self, query: &str) -> anyhow::Result<Vec<f32>> {
-        self.embedder.embed(query).await
+        self.embedder.embed(&self.format_query(query)).await
     }
 
     /// Search vectors using a pre-computed embedding (sync, no async needed).
