@@ -2,6 +2,10 @@ use crate::ingest::Session;
 
 const MAX_CHUNK_CHARS: usize = 3600;
 const OVERLAP_CHARS: usize = 540; // ~15%
+// ponytail: 무의미한 초단문 턴("자 도착" 등)을 벡터 인덱스에서 제외해 시맨틱
+// 노이즈를 줄인다. BM25는 별도로 모든 턴을 인덱싱하므로 키워드 검색은 손실 없음.
+// 튜닝값 — 8~15 사이에서 조절 가능.
+const MIN_CHUNK_CHARS: usize = 12;
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
@@ -26,7 +30,7 @@ pub fn chunk_session(session: &Session, tz: chrono_tz::Tz) -> Vec<Chunk> {
         );
 
         let text = build_turn_text(turn);
-        if text.is_empty() {
+        if text.chars().count() < MIN_CHUNK_CHARS {
             continue;
         }
 
@@ -153,6 +157,24 @@ mod tests {
     }
 
     #[test]
+    fn test_trivially_short_turn_dropped() {
+        // "자 도착" 같은 초단문 턴은 벡터 인덱스에서 제외돼야 한다.
+        let turns = vec![Turn {
+            index: 0,
+            role: Role::User,
+            timestamp: None,
+            content: "자 도착".to_string(),
+            actions: Vec::new(),
+            tokens: None,
+            thinking: None,
+            is_sidechain: false,
+        }];
+        let session = make_session(turns);
+        let chunks = chunk_session(&session, chrono_tz::Tz::UTC);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
     fn test_long_turn_split() {
         let long_content = "word ".repeat(1000);
         let turns = vec![Turn {
@@ -176,7 +198,7 @@ mod tests {
             index: 0,
             role: Role::User,
             timestamp: None,
-            content: "Test".to_string(),
+            content: "Test content here".to_string(),
             actions: Vec::new(),
             tokens: None,
             thinking: None,
