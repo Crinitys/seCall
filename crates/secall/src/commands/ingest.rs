@@ -74,6 +74,7 @@ pub enum IngestPhase {
     Indexing,
 }
 
+#[derive(Default)]
 pub struct IngestStats {
     pub ingested: usize,
     pub skipped: usize,
@@ -380,6 +381,19 @@ pub async fn ingest_sessions(
     format: &OutputFormat,
     sink: Option<&dyn ProgressSink>,
 ) -> Result<IngestStats> {
+    // 프로세스 사이 단일 실행 — SessionStart 훅의 sync 와 SessionEnd 훅의 ingest 가
+    // 겹치면 같은 세션을 두 번 임베딩·시맨틱 추출한다. 기다리지 않고 건너뛴다
+    // (세션 시작을 막지 않게). 건너뛴 세션은 다음 sync 가 처리한다.
+    let lock_path = get_default_db_path().with_file_name("ingest.lock");
+    let Some(_ingest_lock) = try_acquire_ingest_lock(&lock_path)? else {
+        let msg = "다른 secall 인제스트가 실행 중이라 이번 인제스트를 건너뜁니다";
+        eprintln!("{msg}");
+        if let Some(s) = sink {
+            s.message(msg).await;
+        }
+        return Ok(IngestStats::default());
+    };
+
     let mut ingested = 0usize;
     let mut skipped = 0usize;
     let mut errors = 0usize;
@@ -509,6 +523,24 @@ pub async fn ingest_sessions(
         new_session_ids,
         error_details,
     })
+}
+
+/// `ingest.lock` 에 배타 잠금을 시도한다. 다른 프로세스가 잡고 있으면 `None`.
+/// 잠금은 반환된 `File` 이 drop 될 때(프로세스 비정상 종료 포함) OS 가 푼다.
+fn try_acquire_ingest_lock(path: &Path) -> Result<Option<std::fs::File>> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|e| anyhow!("ingest lock open failed ({}): {e}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => {
+            Err(anyhow!("ingest lock failed ({}): {e}", path.display()))
+        }
+    }
 }
 
 /// 분류 규칙(`config.ingest.classification.rules`)을 한 번만 컴파일.
@@ -1308,6 +1340,21 @@ fn find_session_by_id(id: &str) -> Result<Vec<PathBuf>> {
 mod tests {
     use super::*;
     use regex::Regex;
+
+    /// 한 프로세스가 잠금을 잡고 있는 동안 두 번째 시도는 None, 해제 후엔 다시 잡힌다.
+    /// (Windows LockFileEx / Unix flock 모두 같은 프로세스의 다른 핸들도 막는다.)
+    #[test]
+    fn test_ingest_lock_exclusive_and_released_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ingest.lock");
+
+        let first = try_acquire_ingest_lock(&path).unwrap();
+        assert!(first.is_some());
+        assert!(try_acquire_ingest_lock(&path).unwrap().is_none());
+
+        drop(first);
+        assert!(try_acquire_ingest_lock(&path).unwrap().is_some());
+    }
 
     /// `SessionParser::parse` 가 파서 에러를 `SecallError::Parse { source }` 로 감싸므로,
     /// 감싸인 상태에서도 "턴 없음"으로 분류돼야 skip 집계가 동작한다. 이 판정이 깨지면
