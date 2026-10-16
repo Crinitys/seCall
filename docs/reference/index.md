@@ -25,7 +25,7 @@ seCall 의 현재 기준 사실(SSOT) 문서 인덱스. 모든 항목은 "지금
 
 ### 세션 핸드오프 (시간순 스냅샷, 최신만 우선 참고)
 
-- [../sessions/handoff_2026-10-16.md](../sessions/handoff_2026-10-16.md) — codex `end_time` NULL 로 sync 마다 전체 재인제스트(PR #1) + codex UUIDv7 vault 파일명 충돌(PR #2, 기존 데이터 복구) + `release-local` 프로필(PR #3) + upstream PR #151 검토(적용 불필요) · 상태: done. 이후 핸드오프는 `docs/sessions/` 에 둔다
+- [../sessions/handoff_2026-10-16.md](../sessions/handoff_2026-10-16.md) — codex `end_time` NULL 로 sync 마다 전체 재인제스트(PR #1) + codex UUIDv7 vault 파일명 충돌(PR #2, 기존 데이터 복구) + `release-local` 프로필(PR #3) + upstream PR #151 검토(적용 불필요) + 동시 실행 방어(PR #4 DB UNIQUE/FTS 멱등, PR #5~#6 job.lock) · 상태: done. 이후 핸드오프는 `docs/sessions/` 에 둔다
 - [handoff_2026-09-07_session2.md](handoff_2026-09-07_session2.md) — 세션 프리즈 원인 규명 (Orca codex 세션 백필이 `~/.codex` 로 하드링크한 유령 세션 141개 → SessionStart 훅의 sync 임베딩이 세션 진입 차단; 삭제 후 즉시 종료 확인 + ingest 출력에 `Source:` 라인 추가) · 상태: done
 - [handoff_2026-09-07.md](handoff_2026-09-07.md) — 최신 세션 핸드오프 (포크 나이틀리 v0.8.0-crinity.nightly.1~3 도입 + VRAM 제약 대응(num_ctx/모델 언로드/think:false) + MCP Web UI 자동기동·중복방지 + MCP recall 하이브리드 RRF + 그래프 훅 상호작용 버그; 다음=upstream 반영 검토) · 상태: done
 - [handoff_2026-07-03.md](handoff_2026-07-03.md) — 최신 세션 핸드오프 (Windows session3: v0.6.5 릴리스 + 검색 스택 개편 #118/#120/#121 + 그래프 Adamic-Adar #124 + CI red 회귀 복구 #125; 다음=AA 라이브 리빌드 / graph insights) · 상태: draft
