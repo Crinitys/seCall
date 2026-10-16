@@ -47,6 +47,8 @@ pub async fn run(port: u16, allow_config_edit: bool, single_instance: bool) -> R
                         .enable_all()
                         .build()?;
                     rt.block_on(async move {
+                        // 다른 secall 작업이 잡고 있으면 작업을 에러로 끝낸다 (기다리면 취소 불가)
+                        let _job_lock = crate::commands::require_job_lock()?;
                         let args: crate::commands::sync::SyncArgs = serde_json::from_value(val)?;
                         let outcome = crate::commands::sync::run_with_progress(args, &sink).await?;
                         Ok::<_, anyhow::Error>(serde_json::to_value(outcome)?)
@@ -62,6 +64,8 @@ pub async fn run(port: u16, allow_config_edit: bool, single_instance: bool) -> R
                         .enable_all()
                         .build()?;
                     rt.block_on(async move {
+                        // 다른 secall 작업이 잡고 있으면 작업을 에러로 끝낸다 (기다리면 취소 불가)
+                        let _job_lock = crate::commands::require_job_lock()?;
                         let args: crate::commands::ingest::IngestArgs =
                             serde_json::from_value(val)?;
                         let outcome =
@@ -79,6 +83,8 @@ pub async fn run(port: u16, allow_config_edit: bool, single_instance: bool) -> R
                         .enable_all()
                         .build()?;
                     rt.block_on(async move {
+                        // 다른 secall 작업이 잡고 있으면 작업을 에러로 끝낸다 (기다리면 취소 불가)
+                        let _job_lock = crate::commands::require_job_lock()?;
                         let args: crate::commands::wiki::WikiUpdateArgs =
                             serde_json::from_value(val)?;
                         let outcome = crate::commands::wiki::run_with_progress(args, &sink).await?;
@@ -98,6 +104,8 @@ pub async fn run(port: u16, allow_config_edit: bool, single_instance: bool) -> R
                         .enable_all()
                         .build()?;
                     rt.block_on(async move {
+                        // 다른 secall 작업이 잡고 있으면 작업을 에러로 끝낸다 (기다리면 취소 불가)
+                        let _job_lock = crate::commands::require_job_lock()?;
                         let args: crate::commands::graph::GraphRebuildArgs =
                             serde_json::from_value(val)?;
                         let outcome = crate::commands::graph::run_rebuild(args, &sink).await?;

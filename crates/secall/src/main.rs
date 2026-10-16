@@ -490,6 +490,31 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
+    // 무거운 작업은 프로세스 사이에서 하나만 실행한다. 훅이 실행하는 명령은 건너뛰고
+    // (세션 시작/종료를 막지 않게), 사용자가 직접 실행한 명령은 기다린다.
+    let lock_mode = match &cli.command {
+        Commands::Sync { .. } => Some(commands::LockMode::Skip),
+        Commands::Ingest { auto: true, .. } => Some(commands::LockMode::Skip),
+        Commands::Ingest { .. } | Commands::Embed { .. } | Commands::Reindex { .. } => {
+            Some(commands::LockMode::Wait)
+        }
+        Commands::Wiki {
+            action: WikiAction::Update { .. } | WikiAction::Vectorize { .. },
+        } => Some(commands::LockMode::Wait),
+        Commands::Graph {
+            action:
+                GraphAction::Semantic { .. } | GraphAction::Build { .. } | GraphAction::Rebuild { .. },
+        } => Some(commands::LockMode::Wait),
+        _ => None,
+    };
+    let _job_lock = match lock_mode {
+        Some(mode) => match commands::acquire_job_lock(mode)? {
+            Some(lock) => Some(lock),
+            None => return Ok(()),
+        },
+        None => None,
+    };
+
     match cli.command {
         Commands::Init { vault, git } => {
             commands::init::run(vault, git)?;
