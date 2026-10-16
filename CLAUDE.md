@@ -112,6 +112,11 @@
 - PR #115 — zero-turn 세션 비파괴 healing (`reindex --repair-missing-turns` + embed vault 폴백 + 경로 canonical, Gemini 리뷰 3건 반영)
 - PR #116 — README 슬림화(798→729줄) + API 문서 분리(`docs/reference/api.md`) + 버전이력 CHANGELOG 통합
 - CodeRabbit 자동 PR 리뷰 도입 — Gemini Code Assist 2026-07-17 종료 대체 (공개 레포 무료). PR #117 로 동작 검증 (CodeRabbit + Gemini 둘 다 동일 SSE 오류 잡음). **P3 해결.**
+- 포크 PR #1~#3 (2026-10-16, `Crinitys/seCall` 전용 — upstream 미반영)
+  - PR #1 — codex 파서가 `end_time` 을 항상 NULL 로 넣어 ingest 가 모든 codex 세션을 오픈 세션으로 보고 sync 마다 삭제·재인제스트(재임베딩 + 시맨틱 추출)했다. SessionStart 훅의 sync 가 시간 제한으로 끝나던 원인. `end_time` = 마지막 턴 시각 > file mtime 으로 수정
+  - PR #2 — vault md 파일명이 세션 id 앞 8자만 써서, codex UUIDv7(앞 8자 = 타임스탬프) 세션끼리 md 를 덮어썼다(69세션 → 33파일). 파일명에 전체 id 사용 + `resolve_session_file` 이 전체 id 파일을 우선. 기존 충돌 세션은 `ingest --force` 재인제스트 + 예전 8자 파일 삭제로 복구 완료
+  - PR #3 — 로컬 설치용 `release-local` 프로필 (thin LTO, codegen-units 16). 재빌드 5~7분 → 1분 18초. `cargo build --profile release-local -p secall`
+  - upstream PR #151(MCP recall RRF 융합) 검토 — 포크에 상위 호환 구현이 이미 있어 적용하지 않음
 - v0.8.0-crinity.nightly.4 — 세션 프리즈 원인 규명 + ingest 출력 `Source:` 라인. 원인은 seCall 이 아니라 Orca 의 codex 세션 백필이 `~/.codex/sessions` 로 하드링크한 유령 세션 141개였고, SessionStart 훅의 `secall sync` 가 매번 이를 임베딩하며 세션 진입을 막았다. 상세: `docs/reference/handoff_2026-09-07_session2.md`
 - 포크 나이틀리 v0.8.0-crinity.nightly.1~3 (2026-09-07, `Crinitys/seCall` 전용 — upstream 미반영). 상세: `docs/reference/handoff_2026-09-07.md`
   - `ingest.exclude_patterns` — claude-mem 옵저버 세션 등 경로 패턴 제외 (init Step 7)
