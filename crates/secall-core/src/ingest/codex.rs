@@ -272,6 +272,15 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
     // start_time 우선순위: session_meta.timestamp > file mtime > Utc::now()
     let start_time = meta_timestamp.or(file_mtime).unwrap_or_else(Utc::now);
 
+    // end_time 이 NULL 이면 ingest 가 "오픈 세션"으로 보고 sync 마다 삭제 후
+    // 재인제스트(재임베딩 + 시맨틱 추출)한다. 마지막 턴 시각 > file mtime 순으로
+    // 채워 NULL 이 남지 않게 한다.
+    let end_time = turns
+        .iter()
+        .filter_map(|t| t.timestamp)
+        .max()
+        .or(file_mtime);
+
     Ok(Session {
         id: final_id,
         agent: AgentKind::Codex,
@@ -281,7 +290,7 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
         git_branch: None,
         host: Some(gethostname::gethostname().to_string_lossy().to_string()),
         start_time,
-        end_time: None,
+        end_time,
         turns,
         total_tokens: Default::default(),
         session_type: "interactive".to_string(),
@@ -492,6 +501,26 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc)
         );
+        // end_time 은 마지막 턴 시각 — NULL 이면 sync 마다 재인제스트된다
+        assert_eq!(
+            session.end_time,
+            Some(
+                DateTime::parse_from_rfc3339("2026-04-05T10:00:02Z")
+                    .unwrap()
+                    .with_timezone(&Utc)
+            )
+        );
+    }
+
+    #[test]
+    fn test_codex_end_time_falls_back_to_mtime() {
+        // 턴 타임스탬프가 없어도 end_time 은 file mtime 으로 채워져야 한다
+        let f = make_codex_file(&[
+            r#"{"type":"session_meta","payload":{"id":"no-ts"}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}"#,
+        ]);
+        let session = parse_codex_jsonl(f.path()).unwrap();
+        assert!(session.end_time.is_some());
     }
 
     #[test]
