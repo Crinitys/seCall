@@ -212,13 +212,18 @@ impl VectorIndexer {
         db.with_transaction(|| {
             for (chunk, emb_opt) in pending_chunks.iter().zip(embeddings.iter()) {
                 if let Some(embedding) = emb_opt {
-                    let _rowid = db.insert_vector(
+                    // Err → 클로저 종료 → ROLLBACK. None = 동시에 실행된 다른
+                    // 프로세스가 이미 넣은 chunk — 카운트·ANN 추가 없이 건너뛴다.
+                    let Some(_rowid) = db.insert_vector(
                         embedding,
                         &chunk.session_id,
                         chunk.turn_index,
                         chunk.seq,
                         self.embedder.model_name(),
-                    )?; // Err → 클로저 종료 → ROLLBACK
+                    )?
+                    else {
+                        continue;
+                    };
                     chunks_embedded += 1;
                     #[cfg(not(target_os = "windows"))]
                     if let Some(ref ann) = self.ann_index {
