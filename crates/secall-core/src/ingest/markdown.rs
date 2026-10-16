@@ -416,10 +416,20 @@ fn session_filename(session: &Session) -> String {
         sanitized
     };
     let project = project.as_str();
-    // char-aware prefix: 멀티바이트 id(예: 파일명 stem "세션백업")를 byte-slice 하면
-    // char boundary 위반으로 panic → ingest hot path 전체 abort. char 단위로 자른다.
-    let id_prefix: String = session.id.chars().take(8).collect();
-    format!("{agent}_{project}_{id_prefix}.md")
+    // 전체 id 를 쓴다. codex id(UUIDv7)는 앞 8자가 타임스탬프라 ~1분 안에 시작한
+    // 세션끼리 8자 prefix 가 겹쳐 서로의 md 를 덮어썼다. 경로 구분자만 치환한다.
+    let id_part: String = session
+        .id
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c == '\0' {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    format!("{agent}_{project}_{id_part}.md")
 }
 
 /// 더블쿼트 YAML 스칼라 내부용 이스케이프. backslash/quote 뿐 아니라 제어문자
@@ -1044,12 +1054,25 @@ mod tests {
         session.id = "세션백업메모1234".to_string();
         let path = session_vault_path(&session, chrono_tz::Tz::UTC);
         let s = path.to_string_lossy();
-        // 앞 8 char prefix: "세션백업메모12"
         assert!(
-            s.contains("세션백업메모12"),
-            "filename must contain char-aware 8-char id prefix: {s}"
+            s.contains("세션백업메모1234"),
+            "filename must contain full id: {s}"
         );
         assert!(s.ends_with(".md"));
+    }
+
+    #[test]
+    fn test_session_filename_uuidv7_same_prefix_no_collision() {
+        // codex UUIDv7 은 앞 8자가 타임스탬프 — 1분 안에 시작한 두 세션의
+        // 파일명이 겹쳐 md 를 덮어쓰면 안 된다.
+        let mut a = make_session(vec![]);
+        a.id = "01a1330d-11b6-7662-a122-3e2fe56bfee3".to_string();
+        let mut b = make_session(vec![]);
+        b.id = "01a1330d-eeed-7831-8f83-87c41d28ab7b".to_string();
+        assert_ne!(
+            session_vault_path(&a, chrono_tz::Tz::UTC),
+            session_vault_path(&b, chrono_tz::Tz::UTC)
+        );
     }
 
     // P49 ─ 같은 role 연속 turn 헤더 강등 (h2 → h3) 회귀 테스트

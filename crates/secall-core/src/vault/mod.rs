@@ -94,6 +94,15 @@ pub fn resolve_session_file(
             }
         }
     }
+    // 전체 id 파일명이 있으면 그것을 우선한다 — 8자 prefix 가 겹치는 codex
+    // (UUIDv7) 세션끼리 ambiguous 로 빠지지 않게 한다.
+    let exact: Vec<&PathBuf> = matches
+        .iter()
+        .filter(|p| p.to_string_lossy().contains(session_id))
+        .collect();
+    if exact.len() == 1 {
+        return Ok(exact[0].clone());
+    }
     match matches.len() {
         1 => Ok(matches.into_iter().next().unwrap()),
         0 => Err(crate::SecallError::SessionNotFound(session_id.to_string())),
@@ -568,6 +577,24 @@ mod tests {
         let stored = "raw\\sessions\\2026-01-01\\missing_abcd1234.md";
         let err = resolve_session_file(dir.path(), stored, "abcd1234-3333");
         assert!(matches!(err, Err(crate::SecallError::Other(_))));
+    }
+
+    #[test]
+    fn resolve_prefers_full_id_over_shared_prefix() {
+        // 8자 prefix 가 같은 codex 세션 둘 — 전체 id 파일명으로 정확히 고른다
+        let dir = TempDir::new().unwrap();
+        let real = write_md(
+            dir.path(),
+            "raw/.sessions/2026-10-13/codex_s1_01a1330d-11b6-7662-a122-3e2fe56bfee3.md",
+        );
+        write_md(
+            dir.path(),
+            "raw/.sessions/2026-10-13/codex_s1_01a1330d-eeed-7831-8f83-87c41d28ab7b.md",
+        );
+        let stored = "raw\\.sessions\\2026-10-13\\codex_s1_01a1330d.md";
+        let got = resolve_session_file(dir.path(), stored, "01a1330d-11b6-7662-a122-3e2fe56bfee3")
+            .unwrap();
+        assert_eq!(got, real);
     }
 }
 
