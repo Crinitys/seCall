@@ -8,6 +8,13 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
+# 로컬 설치용 빠른 빌드 — 배포는 release(fat LTO), 로컬 확인은
+# `cargo build --profile release-local` (산출물: target/release-local/).
+[profile.release-local]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [workspace.package]
 # 포크(Crinitys) 나이틀리. rustc/Node 관례대로 "다음 릴리즈" 버전에 프리릴리즈를
 # 붙여, upstream 정식 0.7.0 보다 뒤(0.7.0 < 0.8.0-crinity.nightly.N < 0.8.0)로
