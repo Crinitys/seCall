@@ -94,6 +94,9 @@ impl Bm25Indexer {
 
         // Insert session metadata first
         db.insert_session(session)?;
+        // turns 는 OR IGNORE 라 중복되지 않지만 FTS5 는 UNIQUE 가 없다. 동시에 실행된
+        // 다른 프로세스가 먼저 넣은 행을 지우고 다시 넣어 FTS 를 멱등하게 만든다.
+        db.clear_session_fts(&session.id)?;
 
         for turn in &session.turns {
             // Tokenize turn content
@@ -270,6 +273,28 @@ mod tests {
             .search(&db, "아키텍처", 10, &SearchFilters::default())
             .unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_index_session_twice_no_fts_duplicates() {
+        // 동시 sync 가 같은 세션을 두 번 인덱싱해도 FTS 행은 turn 당 1개여야 한다
+        let db = Database::open_memory().unwrap();
+        let tok = LinderaKoTokenizer::new().unwrap();
+        let indexer = Bm25Indexer::new(Box::new(tok));
+
+        let session = make_session("dup", "proj", "중복 인덱싱 테스트");
+        indexer.index_session(&db, &session).unwrap();
+        indexer.index_session(&db, &session).unwrap();
+
+        let fts_rows: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM turns_fts WHERE session_id = 'dup'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_rows, session.turns.len() as i64);
     }
 
     #[test]

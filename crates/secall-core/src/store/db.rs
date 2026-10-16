@@ -158,6 +158,9 @@ impl Database {
             // ② 벡터 dot-only 최적화: 기존 embedding 을 L2 정규화 (idempotent, 재실행 무해).
             self.normalize_existing_vectors()?;
         }
+        if current < 12 {
+            self.dedup_vectors_and_add_unique()?;
+        }
         if current < CURRENT_SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO config(key, value) VALUES ('schema_version', ?1)",
@@ -168,6 +171,27 @@ impl Database {
         // Non-versioned additions: always apply (CREATE IF NOT EXISTS)
         self.conn.execute_batch(CREATE_QUERY_CACHE)?;
 
+        Ok(())
+    }
+
+    /// v12: 동시 sync 가 남긴 중복 벡터(같은 session/turn/chunk)를 가장 오래된 행만
+    /// 남기고 지운 뒤 UNIQUE 인덱스를 건다. turn_vectors 는 lazy 생성이라 없으면 skip
+    /// (이후 `init_vector_table` 이 인덱스와 함께 만든다).
+    fn dedup_vectors_and_add_unique(&self) -> Result<()> {
+        let exists: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='turn_vectors'",
+            [],
+            |r| r.get(0),
+        )?;
+        if exists == 0 {
+            return Ok(());
+        }
+        self.conn.execute_batch(
+            "DELETE FROM turn_vectors WHERE id NOT IN \
+                 (SELECT MIN(id) FROM turn_vectors GROUP BY session_id, turn_index, chunk_seq);
+             CREATE UNIQUE INDEX IF NOT EXISTS idx_vectors_unique \
+                 ON turn_vectors(session_id, turn_index, chunk_seq);",
+        )?;
         Ok(())
     }
 

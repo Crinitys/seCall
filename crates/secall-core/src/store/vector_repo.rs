@@ -3,6 +3,8 @@ use crate::store::db::Database;
 
 pub trait VectorRepo {
     fn init_vector_table(&self) -> anyhow::Result<()>;
+    /// 새 행의 rowid. 같은 `(session_id, turn_index, chunk_seq)` 가 이미 있으면
+    /// (동시에 실행된 다른 프로세스가 먼저 넣은 경우) `None`.
     fn insert_vector(
         &self,
         embedding: &[f32],
@@ -10,7 +12,7 @@ pub trait VectorRepo {
         turn_index: u32,
         chunk_seq: u32,
         model: &str,
-    ) -> anyhow::Result<i64>;
+    ) -> anyhow::Result<Option<i64>>;
     fn search_vectors(
         &self,
         query_embedding: &[f32],
@@ -38,6 +40,7 @@ impl VectorRepo for Database {
             );
             CREATE INDEX IF NOT EXISTS idx_vectors_session ON turn_vectors(session_id);
             CREATE INDEX IF NOT EXISTS idx_vectors_session_turn ON turn_vectors(session_id, turn_index);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_vectors_unique ON turn_vectors(session_id, turn_index, chunk_seq);
         ",
         )?;
         Ok(())
@@ -50,7 +53,7 @@ impl VectorRepo for Database {
         turn_index: u32,
         chunk_seq: u32,
         model: &str,
-    ) -> anyhow::Result<i64> {
+    ) -> anyhow::Result<Option<i64>> {
         if embedding.is_empty() {
             anyhow::bail!("empty embedding for session={session_id} turn={turn_index}");
         }
@@ -76,12 +79,14 @@ impl VectorRepo for Database {
 
         // ② 저장 시 L2 정규화 → 검색에서 dot only (schema v11). 이미 unit 이면 무변.
         let bytes = floats_to_bytes(&l2_normalize(embedding));
-        self.conn().execute(
-            "INSERT INTO turn_vectors(session_id, turn_index, chunk_seq, model, embedded_at, embedding)
+        // OR IGNORE + idx_vectors_unique — 동시에 실행된 sync/embed 가 같은 chunk 를
+        // 두 번 넣지 않게 한다 (2026-09 db1f7506 세션 벡터 2벌 사례).
+        let inserted = self.conn().execute(
+            "INSERT OR IGNORE INTO turn_vectors(session_id, turn_index, chunk_seq, model, embedded_at, embedding)
              VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5)",
             rusqlite::params![session_id, turn_index as i64, chunk_seq as i64, model, bytes],
         )?;
-        Ok(self.conn().last_insert_rowid())
+        Ok((inserted > 0).then(|| self.conn().last_insert_rowid()))
     }
 
     fn search_vectors(
@@ -549,5 +554,27 @@ mod tests {
 
         let empty = db.get_session_chunk_keys("missing").unwrap();
         assert!(empty.is_empty());
+    }
+
+    /// 같은 chunk 를 두 번 넣으면 두 번째는 무시(None)되고 행은 1개만 남는다
+    /// — 동시에 실행된 sync/embed 의 벡터 중복 방지.
+    #[test]
+    fn test_insert_vector_duplicate_chunk_ignored() {
+        let db = Database::open_memory().unwrap();
+        db.init_vector_table().unwrap();
+        let first = db
+            .insert_vector(&[1.0_f32, 0.0, 0.0], "A", 0, 0, "test")
+            .unwrap();
+        let second = db
+            .insert_vector(&[1.0_f32, 0.0, 0.0], "A", 0, 0, "test")
+            .unwrap();
+        assert!(first.is_some());
+        assert!(second.is_none());
+        assert_eq!(db.get_session_chunk_keys("A").unwrap().len(), 1);
+        let rows: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM turn_vectors", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
     }
 }
