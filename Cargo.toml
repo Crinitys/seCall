@@ -21,7 +21,7 @@ codegen-units = 16
 # 정렬되게 한다. 나이틀리 빌드마다 끝 시퀀스를 올린다.
 version = "0.8.0-crinity.nightly.4"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.89"
 license = "AGPL-3.0"
 repository = "https://github.com/hang-in/seCall"
 

@@ -6,7 +6,7 @@ Claude Code, Codex CLI, Gemini CLI, claude.ai, ChatGPT 세션을 수집해 Obsid
 
 <div align="center">
 
-[![Rust](https://img.shields.io/badge/Rust-1.75+-f74c00?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.89+-f74c00?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-FTS5-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![MCP](https://img.shields.io/badge/MCP-Protocol-5A67D8)](https://modelcontextprotocol.io/)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
@@ -118,7 +118,7 @@ cargo install --path crates/secall --no-default-features
 
 웹 UI까지 포함해 직접 빌드하려면 다음 도구가 필요합니다.
 
-- Rust 1.75+
+- Rust 1.89+
 - Node 22
 - pnpm 9
 - just
@@ -675,7 +675,7 @@ cargo build --release
 
 | 도구   | 버전 / 설명    |
 | ---- | ---------- |
-| Rust | 1.75+      |
+| Rust | 1.89+      |
 | Node | 22+        |
 | pnpm | 9+         |
 | just | 선택, 명령 통합용 |
@@ -725,7 +725,7 @@ interfaces
 
 | 분류            | 기술                              |
 | ------------- | ------------------------------- |
-| 언어            | Rust 1.75+, 2021 edition        |
+| 언어            | Rust 1.89+, 2021 edition        |
 | 데이터베이스        | SQLite + FTS5, rusqlite bundled |
 | 한국어 NLP       | Lindera ko-dic, Kiwi-rs         |
 | 임베딩           | Ollama qwen3-embedding:0.6b, ONNX Runtime (BAAI/bge-m3) |
