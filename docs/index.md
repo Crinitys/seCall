@@ -11,7 +11,7 @@
 2. [reference/index.md](reference/index.md) → 최신 handoff + 백로그로 현재 맥락 파악
 3. 작업과 관련된 [plans](plans/index.md) / [prompts](prompts/index.md) 만 선택적으로
 
-## 문서군 (8개 디렉토리)
+## 문서군 (9개 디렉토리)
 
 | 디렉토리 | 역할 | 인덱스 |
 |---|---|---|
@@ -23,6 +23,7 @@
 | [community/](community/) | 외부 공개·커뮤니티용 문서, 릴리스 노트 | — |
 | [insight/](insight/) | 분석·회고·인사이트 (의사결정 근거) | — |
 | [reviews/](reviews/) | 코드/PR 리뷰 기록 (같은 영역 재작업 시 참고) | — |
+| [sessions/](sessions/) | 세션 작업일지 (handoff — 탐색·결정·실수·향후 과제) | [reference/index](reference/index.md) |
 
 ## 자주 찾는 기준 문서
 
